@@ -19,6 +19,8 @@ const COMMISSION_RATE = Number(process.env.COMMISSION_RATE || 0.05); // illustra
 // between two live providers" described for Phase 3 — see
 // CampusHub_Phase3_Build_Prompt.md.
 const PROVIDERS = { mock: mockProvider, chapa: chapaProvider };
+const MANUAL_WINDOW_HOURS = Number(process.env.MANUAL_PAYMENT_WINDOW_HOURS || 24);
+const MANUAL_MAX_ATTEMPTS = Number(process.env.MANUAL_PROOF_MAX_ATTEMPTS || 3);
 
 function selectProvider() {
   const preferred = process.env.PAYMENT_PROVIDER || "mock";
@@ -39,13 +41,14 @@ function selectProvider() {
 // abstraction layer... a new provider can be added without touching order,
 // rental, or ticketing code").
 const finalizers = {};
-function registerFinalizer(transactionType, { onConfirmed, onFailed, getRecipient }) {
-  finalizers[transactionType] = { onConfirmed, onFailed, getRecipient };
+function registerFinalizer(transactionType, { onConfirmed, onFailed, getRecipient, isOpen }) {
+  finalizers[transactionType] = { onConfirmed, onFailed, getRecipient, isOpen };
 }
-
-async function initiatePayment({ transactionType, transactionId, amount, buyerId, buyerEmail }) {
+async function initiatePayment({ transactionType, transactionId, amount, buyerId, buyerEmail, method }) {
   if (!finalizers[transactionType]) throw badRequest(`Unknown transaction type: ${transactionType}`);
+  if (method === "manual") return initiateManualPayment({ transactionType, transactionId, amount, buyerId });
   const provider = selectProvider();
+  // ...rest unchanged
 
   const { rows } = await db.query(
     `INSERT INTO payments (transaction_type, transaction_id, provider, amount, status)
@@ -88,17 +91,114 @@ async function initiatePayment({ transactionType, transactionId, amount, buyerId
 // request is authenticated as the student who owns the payment (see
 // routes/payments.js). A real provider's webhook route would call this
 // same function after its own signature verification passes.
-async function handleProviderCallback(paymentId, outcome) {
+
+// Manual payment: the student pays the seller/organizer's own account outside
+// the app, then uploads proof (see modules/payments/manual.routes.js). Nothing
+// is confirmed until the payee approves. Stock / capacity / dates stay held by
+// the caller's reservation until then.
+async function initiateManualPayment({ transactionType, transactionId, amount, buyerId }) {
+  const finalizer = finalizers[transactionType];
+  let recipient;
+  let accounts;
+  try {
+    if (!finalizer.getRecipient) {
+      throw badRequest(`Manual payment is not available for "${transactionType}"`, "MANUAL_NOT_SUPPORTED");
+    }
+    recipient = await finalizer.getRecipient(transactionId);
+    if (!recipient || !recipient.userId) {
+      throw badRequest("There is no seller to pay for this purchase", "NO_PAYEE");
+    }
+    if (recipient.userId === buyerId) throw badRequest("You can't pay yourself", "SELF_PAYMENT");
+
+    const { rows } = await db.query(
+      `SELECT id, method, account_name, account_number, instructions, is_default
+         FROM payout_accounts WHERE owner_id = $1 AND active
+        ORDER BY is_default DESC, created_at`,
+      [recipient.userId]
+    );
+    accounts = rows;
+    if (!accounts.length) {
+      throw badRequest(
+        "The seller hasn't added a payout account yet, so they can't accept direct payments. Please contact them.",
+        "NO_PAYOUT_ACCOUNT"
+      );
+    }
+  } catch (err) {
+    // The caller already reserved stock / a seat / dates — give that hold back.
+    try {
+      await db.withTransaction((client) => finalizer.onFailed(transactionId, client));
+    } catch (releaseErr) {
+      console.error("[payments] could not release hold after manual-payment precheck failed:", releaseErr);
+    }
+    throw err;
+  }
+
+  const { rows } = await db.query(
+    `INSERT INTO payments
+       (transaction_type, transaction_id, provider, amount, status,
+        payer_id, payee_id, payee_accounts, description, expires_at)
+     VALUES ($1,$2,'manual',$3,'pending',$4,$5,$6,$7, now() + ($8 || ' hours')::interval)
+     RETURNING *`,
+    [transactionType, transactionId, amount, buyerId, recipient.userId, JSON.stringify(accounts), recipient.description || null, String(MANUAL_WINDOW_HOURS)]
+  );
+  const payment = rows[0];
+  await audit(buyerId, "payment.initiate", transactionType, transactionId, {
+    paymentId: payment.id, amount, provider: "manual", payeeId: recipient.userId,
+  });
+
+  return {
+    paymentId: payment.id,
+    amount: Number(payment.amount),
+    provider: "manual",
+    expiresAt: payment.expires_at,
+  };
+}
+
+// Fails (and releases the hold for) manual payments where the student never
+// uploaded proof within the window. Payments already under review are left alone.
+async function expireStaleManualPayments() {
+  const { rows } = await db.query(
+    `SELECT id, payer_id FROM payments
+      WHERE provider = 'manual' AND status = 'pending' AND expires_at < now()
+      ORDER BY expires_at LIMIT 100`
+  );
+  let expired = 0;
+  for (const p of rows) {
+    try {
+      await handleProviderCallback(p.id, "fail");
+      expired += 1;
+    } catch (err) {
+      if (err.code !== "PAYMENT_NOT_PENDING") console.error("[payments] expiry failed for", p.id, err.message);
+    }
+  }
+  return expired;
+}
+
+async function handleProviderCallback(paymentId, outcome, beforeFinalize) {
   return db.withTransaction(async (client) => {
     const { rows } = await client.query("SELECT * FROM payments WHERE id = $1 FOR UPDATE", [paymentId]);
     const payment = rows[0];
     if (!payment) throw notFound("Payment not found");
-    if (payment.status !== "pending") {
+    // 'under_review' = manual payment whose proof is awaiting the payee's decision.
+    if (payment.status !== "pending" && payment.status !== "under_review") {
       throw conflict(`Payment already ${payment.status}`, "PAYMENT_NOT_PENDING");
     }
-
     const finalizer = finalizers[payment.transaction_type];
     if (!finalizer) throw badRequest(`No finalizer registered for ${payment.transaction_type}`);
+
+    // If the buyer cancelled the order/ticket while the manual payment was open, its stock
+    // was already returned. Running the finalizer again would release it twice (failure)
+    // or confirm something that holds no stock (approval). Close the payment quietly.
+    if (payment.provider === "manual" && finalizer.isOpen && !(await finalizer.isOpen(payment.transaction_id, client))) {
+      await client.query("UPDATE payments SET status='failed' WHERE id=$1", [paymentId]);
+      await client.query(
+        "UPDATE payment_proofs SET status='rejected', reject_reason='Order was cancelled' WHERE payment_id=$1 AND status='submitted'",
+        [paymentId]
+      );
+      return { ...payment, status: "failed", notOpen: true };
+    }
+    // Hook so callers (manual approve/reject) can update their own rows in this transaction.
+    if (beforeFinalize) await beforeFinalize(client, payment);
 
     if (outcome === "success") {
       await client.query("UPDATE payments SET status='confirmed', confirmed_at=now(), provider_ref=$2 WHERE id=$1", [
@@ -112,7 +212,7 @@ async function handleProviderCallback(paymentId, outcome) {
       // Phase 3: commission comes from the payment's university fee schedule (falls back to the platform default).
       const fees = await getFees(payment.university_id, client);
       const commission = Math.round(Number(payment.amount) * fees.commissionRate * 100) / 100;
-      if (commission > 0) {
+      if (commission > 0 && payment.provider !== "manual") {
         await client.query("INSERT INTO transactions (payment_id, type, amount) VALUES ($1,'commission',$2)", [
           paymentId,
           commission,
@@ -148,5 +248,5 @@ async function refundPayment(paymentId, amount, reason, actorId) {
 
 module.exports = {
   registerFinalizer, initiatePayment, handleProviderCallback, refundPayment, notify, COMMISSION_RATE,
-  _selectProvider: selectProvider, // exported for the smoke test to confirm failover behavior
+  _selectProvider: selectProvider, expireStaleManualPayments, MANUAL_WINDOW_HOURS, MANUAL_MAX_ATTEMPTS, // exported for the smoke test to confirm failover behavior
 };
