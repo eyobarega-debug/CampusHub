@@ -258,6 +258,7 @@ router.post(
       transactionId: order.id,
       amount: order.amount,
       buyerId: req.user.id,
+      method: req.body && ["online", "manual"].includes(req.body.paymentMethod) ? req.body.paymentMethod : undefined,
     });
     res.status(201).json({ order, payment });
   })
@@ -276,6 +277,18 @@ router.get(
 );
 
 payments.registerFinalizer("p2p_order", {
+    isOpen: async (orderId, client) => {
+    const { rows } = await client.query("SELECT status FROM p2p_orders WHERE id = $1", [orderId]);
+    return rows[0]?.status === "pending_payment";
+  },
+  getRecipient: async (orderId) => {
+    const { rows } = await db.query(
+      `SELECT o.seller_id, l.title FROM p2p_orders o JOIN p2p_listings l ON l.id = o.listing_id WHERE o.id = $1`,
+      [orderId]
+    );
+    if (!rows[0]) return null;
+    return { userId: rows[0].seller_id, description: `Item: ${rows[0].title}` };
+  },
   onConfirmed: async (orderId, client) => {
     const { rows } = await client.query("UPDATE p2p_orders SET status='paid' WHERE id=$1 RETURNING *", [orderId]);
     const order = rows[0];

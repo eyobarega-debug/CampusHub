@@ -30,6 +30,8 @@ router.post(
     const { rows } = await db.query("SELECT * FROM payments WHERE id = $1", [req.params.id]);
     const payment = rows[0];
     if (!payment) throw notFound("Payment not found");
+        // Manual payments are confirmed only by the payee's approval — never by the buyer.
+    if (payment.provider === "manual") throw forbidden("This payment is confirmed by the seller, not by the checkout simulator");
     // A real webhook has no notion of "the logged-in user" — this check is a
     // stand-in for provider signature verification, appropriate for a local demo.
     if (req.user.role !== "admin") {

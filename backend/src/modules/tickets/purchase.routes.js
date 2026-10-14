@@ -19,7 +19,7 @@ router.post(
   "/:eventId/tickets",
   requireAuth(),
   requireRole("student"),
-  validate({ body: z.object({ ticketTypeId: z.string().uuid() }) }),
+  validate({ body: z.object({ ticketTypeId: z.string().uuid(), paymentMethod: z.enum(["online", "manual"]).optional() }) }),
   asyncHandler(async (req, res) => {
     if (!req.user.verified) throw forbidden("Verify your student account before buying tickets");
 
@@ -42,7 +42,7 @@ router.post(
       await client.query("UPDATE ticket_types SET quantity_sold = quantity_sold + 1 WHERE id = $1", [tt.id]);
       const { rows } = await client.query(
         `INSERT INTO tickets (event_id, ticket_type_id, holder_id, qr_token_hash, status)
-         VALUES ($1,$2,$3,'PENDING','reserved') RETURNING *`,
+                 VALUES ($1,$2,$3,'PENDING-' || gen_random_uuid()::text,'reserved') RETURNING *`,
         [event.id, tt.id, req.user.id]
       );
       return rows[0];
@@ -54,6 +54,7 @@ router.post(
       transactionId: ticket.id,
       amount: ttRows2[0].price,
       buyerId: req.user.id,
+      method: req.body.paymentMethod,
     });
     res.status(201).json({ ticket, payment });
   })

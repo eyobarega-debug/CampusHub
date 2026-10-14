@@ -36,6 +36,9 @@ app.use("/api/events", tenant,requireFeature("events"), require("./modules/ticke
 app.use("/api/reviews", tenant, require("./modules/reviews/routes"));
 app.use("/api/reports", tenant, require("./modules/reports/routes"));
 app.use("/api/notifications", tenant, require("./modules/notifications/routes"));
+// Manual payment-with-proof routes must come first: the generic payments router below has GET /:id.
+app.use("/api/payments", tenant, require("./modules/payments/manual.routes"));
+app.use("/api/payout-accounts", tenant, require("./modules/payments/payout.routes"));
 app.use("/api/payments", tenant, require("./modules/payments/routes"));
 app.use("/api/super", require("./modules/super/routes"));
 app.use("/api/admin", tenant, require("./modules/admin/routes"));

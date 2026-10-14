@@ -18,6 +18,7 @@ router.post(
   validate({
     body: z.object({
       items: z.array(z.object({ productId: z.string().uuid(), quantity: z.number().int().positive() })).min(1),
+            paymentMethod: z.enum(["online", "manual"]).optional(),
     }),
   }),
   asyncHandler(async (req, res) => {
@@ -74,6 +75,7 @@ router.post(
       transactionId: result.id,
       amount: result.total_amount,
       buyerId: req.user.id,
+      method: req.body.paymentMethod,
     });
 
     res.status(201).json({ order: result, payment });
@@ -123,7 +125,16 @@ router.get(
   requireAuth(),
   asyncHandler(async (req, res) => {
     const { rows } = await db.query(
-      `SELECT o.*, s.name AS store_name, s.merchant_id FROM orders o JOIN stores s ON s.id = o.store_id WHERE o.id = $1`,
+      `SELECT o.*, s.name AS store_name, u.name AS buyer_name,
+              lp.id AS payment_id, lp.status AS payment_status, lp.provider AS payment_provider,
+              lp.reject_reason AS payment_reject_reason
+       FROM orders o JOIN stores s ON s.id = o.store_id JOIN users u ON u.id = o.buyer_id
+       LEFT JOIN LATERAL (
+         SELECT p.id, p.status, p.provider,
+                (SELECT reject_reason FROM payment_proofs WHERE payment_id = p.id AND status = 'rejected' ORDER BY created_at DESC LIMIT 1) AS reject_reason
+           FROM payments p WHERE p.transaction_type = 'order' AND p.transaction_id = o.id ORDER BY p.created_at DESC LIMIT 1
+       ) lp ON true
+       ${where} ORDER BY o.created_at DESC LIMIT $${params.length - 1} OFFSET $${params.length}`,
       [req.params.id]
     );
     const order = rows[0];
@@ -222,6 +233,20 @@ router.post(
 
 // --- Payment finalizers registered with the abstraction layer (SRS Section 16) ---
 payments.registerFinalizer("order", {
+    isOpen: async (orderId, client) => {
+    const { rows } = await client.query("SELECT status FROM orders WHERE id = $1", [orderId]);
+    return rows[0]?.status === "pending_payment";
+  },
+  getRecipient: async (orderId) => {
+    const { rows } = await db.query(
+      `SELECT s.merchant_id, s.name, o.total_amount,
+              (SELECT COALESCE(SUM(quantity),0) FROM order_items WHERE order_id = o.id) AS items
+         FROM orders o JOIN stores s ON s.id = o.store_id WHERE o.id = $1`,
+      [orderId]
+    );
+    if (!rows[0]) return null;
+    return { userId: rows[0].merchant_id, description: `Order #${orderId.slice(0, 8)} from ${rows[0].name} (${rows[0].items} item(s))` };
+  },
   onConfirmed: async (orderId, client) => {
     const { rows } = await client.query("UPDATE orders SET status='confirmed', updated_at=now() WHERE id=$1 RETURNING *", [orderId]);
     const order = rows[0];

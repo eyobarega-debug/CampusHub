@@ -37,8 +37,15 @@ router.get(
   requireAuth(),
   asyncHandler(async (req, res) => {
     const { rows } = await db.query(
-      `SELECT t.*, e.title AS event_title, e.date_time, e.location, tt.name AS ticket_type, tt.price
+      `SELECT t.*, e.title AS event_title, e.date_time, e.location, tt.name AS ticket_type, tt.price,
+              lp.id AS payment_id, lp.status AS payment_status, lp.provider AS payment_provider,
+              lp.reject_reason AS payment_reject_reason
        FROM tickets t JOIN events e ON e.id = t.event_id JOIN ticket_types tt ON tt.id = t.ticket_type_id
+       LEFT JOIN LATERAL (
+         SELECT p.id, p.status, p.provider,
+                (SELECT reject_reason FROM payment_proofs WHERE payment_id = p.id AND status = 'rejected' ORDER BY created_at DESC LIMIT 1) AS reject_reason
+           FROM payments p WHERE p.transaction_type = 'ticket' AND p.transaction_id = t.id ORDER BY p.created_at DESC LIMIT 1
+       ) lp ON true
        WHERE t.holder_id = $1 ORDER BY t.created_at DESC`,
       [req.user.id]
     );
@@ -191,6 +198,24 @@ router.post(
 );
 
 payments.registerFinalizer("ticket", {
+    isOpen: async (ticketId, client) => {
+    const { rows } = await client.query("SELECT status FROM tickets WHERE id = $1", [ticketId]);
+    return rows[0]?.status === "reserved";
+  },
+  // The organizer who gets paid is the lead of the club running the event.
+  getRecipient: async (ticketId) => {
+    const { rows } = await db.query(
+      `SELECT c.lead_user_id, e.title, tt.name AS ticket_type
+         FROM tickets t
+         JOIN events e ON e.id = t.event_id
+         JOIN clubs c ON c.id = e.club_id
+         JOIN ticket_types tt ON tt.id = t.ticket_type_id
+        WHERE t.id = $1`,
+      [ticketId]
+    );
+    if (!rows[0]) return null;
+    return { userId: rows[0].lead_user_id, description: `Ticket: ${rows[0].title} (${rows[0].ticket_type})` };
+  },
   onConfirmed: async (ticketId, client) => {
     const signature = signTicket(ticketId);
     const { rows } = await client.query(

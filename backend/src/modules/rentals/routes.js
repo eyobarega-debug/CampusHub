@@ -173,7 +173,7 @@ router.patch(
 router.post(
   "/:id/bookings",
   requireAuth(),
-  validate({ body: z.object({ startDate: z.string(), endDate: z.string() }) }),
+  validate({ body: z.object({ startDate: z.string(), endDate: z.string(), paymentMethod: z.enum(["online", "manual"]).optional() }) }),
   asyncHandler(async (req, res) => {
     if (!req.user.verified) throw forbidden("Verify your student account before booking a rental");
     const { startDate, endDate } = req.body;
@@ -213,6 +213,7 @@ router.post(
       transactionId: booking.id,
       amount: booking.total_amount,
       buyerId: req.user.id,
+      method: req.body.paymentMethod,
     });
     res.status(201).json({ booking, payment });
   })
@@ -328,6 +329,19 @@ router.post(
 );
 
 payments.registerFinalizer("booking", {
+    isOpen: async (bookingId, client) => {
+    const { rows } = await client.query("SELECT status FROM rental_bookings WHERE id = $1", [bookingId]);
+    return rows[0]?.status === "pending_payment";
+  },
+  getRecipient: async (bookingId) => {
+    const { rows } = await db.query(
+      `SELECT ri.owner_id, ri.title, b.start_date, b.end_date
+         FROM rental_bookings b JOIN rental_items ri ON ri.id = b.rental_item_id WHERE b.id = $1`,
+      [bookingId]
+    );
+    if (!rows[0]) return null;
+    return { userId: rows[0].owner_id, description: `Rental: ${rows[0].title} (${rows[0].start_date} to ${rows[0].end_date})` };
+  },
   onConfirmed: async (bookingId, client) => {
     const { rows } = await client.query(
       "UPDATE rental_bookings SET status='confirmed_awaiting_pickup' WHERE id=$1 RETURNING *",
