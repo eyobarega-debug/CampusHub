@@ -34,6 +34,8 @@ import PayoutAccounts from "./pages/PayoutAccounts";
 import Profile from "./pages/Profile";
 import MockCheckout from "./pages/MockCheckout";
 import NotFound from "./pages/NotFound";
+import Commissions from "./pages/Commissions";
+import AdminCommissions from "./pages/AdminCommissions";
 
 function Layout({ children }) {
   return (
@@ -87,6 +89,8 @@ export default function App() {
 
             <Route path="/pay/manual/:paymentId" element={<ProtectedRoute><ManualPayment /></ProtectedRoute>} />
             <Route path="/payment-approvals" element={<ProtectedRoute><PaymentApprovals /></ProtectedRoute>} />
+            <Route path="/commissions" element={<ProtectedRoute><Commissions /></ProtectedRoute>} />
+            <Route path="/admin/commissions" element={<ProtectedRoute role={["admin", "super_admin"]}><AdminCommissions /></ProtectedRoute>} />
             <Route path="/payout-accounts" element={<ProtectedRoute><PayoutAccounts /></ProtectedRoute>} />
 
             <Route path="/mock-checkout/:paymentId" element={<ProtectedRoute><MockCheckout /></ProtectedRoute>} />

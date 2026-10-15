@@ -37,9 +37,15 @@ function ReviewRow({ p, onDone, setError }) {
 
   return (
     <div className="mt-3 border-t border-slate/15 pt-3">
-      <p className="text-sm text-slate">
+     <p className="text-sm text-slate">
         Reference <span className="font-mono text-navy">{p.proof?.referenceNumber}</span>. Check that{" "}
         <strong>{p.amount.toFixed(2)} birr</strong> actually arrived in your account before approving.
+        {p.commissionRate != null && (
+          <span className="block text-xs">
+            Approving adds a {Math.round(p.commissionRate * 100)}% CampusHub commission to your account
+            {p.transactionType === "booking" ? " (on the rental fee, deposit excluded)" : ""}.
+          </span>
+        )}
       </p>
       <div className="mt-2 flex flex-wrap gap-2">
         <Button variant="outline" onClick={() => setShowImg((v) => !v)}>{showImg ? "Hide screenshot" : "View screenshot"}</Button>

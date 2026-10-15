@@ -20,6 +20,7 @@ const { validate } = require("../../middleware/validate");
 const { asyncHandler, badRequest, conflict, notFound } = require("../../utils/errors");
 const { notify, audit } = require("../../utils/notify");
 const paymentsService = require("../../services/payments");
+const { RATES } = require("../../services/commissions");
 
 const router = express.Router();
 
@@ -96,6 +97,7 @@ const LIST_SQL = `
 function rowOut(r) {
   return {
     ...publicPayment(r),
+        commissionRate: RATES[r.transaction_type] ?? null,
     payerName: r.payer_name,
     payeeName: r.payee_name,
     proof: r.proof_id

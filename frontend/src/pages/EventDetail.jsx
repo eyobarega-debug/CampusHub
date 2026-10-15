@@ -3,6 +3,7 @@ import { useNavigate, useParams } from "react-router-dom";
 import { client } from "../api/client";
 import { useAuth, errMsg } from "../context/AuthContext";
 import { Badge, Button, Card, ErrorBanner, PageHeader, Spinner, SuccessBanner } from "../components/ui";
+import { PAYMENT_METHOD, startCheckout } from "../api/checkout";
 
 export default function EventDetail() {
   const { id } = useParams();

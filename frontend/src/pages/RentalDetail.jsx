@@ -3,6 +3,7 @@ import { useNavigate, useParams } from "react-router-dom";
 import { client } from "../api/client";
 import { useAuth, errMsg } from "../context/AuthContext";
 import { Button, Card, ErrorBanner, Input, PageHeader, Spinner } from "../components/ui";
+import { PAYMENT_METHOD, startCheckout } from "../api/checkout";
 
 export default function RentalDetail() {
   const { id } = useParams();

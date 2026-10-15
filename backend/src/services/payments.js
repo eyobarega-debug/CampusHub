@@ -6,6 +6,7 @@ const mockProvider = require("./providers/mock");
 const chapaProvider = require("./providers/chapa");
 
 const { getFees } = require("./fees");
+const commissions = require("./commissions");
 const COMMISSION_RATE = Number(process.env.COMMISSION_RATE || 0.05); // illustrative default — see SRS Section 18
 
 // Phase 2: provider registry + selection with automatic failover. SRS
@@ -41,8 +42,11 @@ function selectProvider() {
 // abstraction layer... a new provider can be added without touching order,
 // rental, or ticketing code").
 const finalizers = {};
-function registerFinalizer(transactionType, { onConfirmed, onFailed, getRecipient, isOpen }) {
-  finalizers[transactionType] = { onConfirmed, onFailed, getRecipient, isOpen };
+//   commissionBase(transactionId, client, payment) — optional. What the platform commission is
+//                                        charged on (rentals: the fee without the refundable
+//                                        deposit). Defaults to the whole payment amount.
+function registerFinalizer(transactionType, { onConfirmed, onFailed, getRecipient, isOpen, commissionBase }) {
+  finalizers[transactionType] = { onConfirmed, onFailed, getRecipient, isOpen, commissionBase };
 }
 async function initiatePayment({ transactionType, transactionId, amount, buyerId, buyerEmail, method }) {
   if (!finalizers[transactionType]) throw badRequest(`Unknown transaction type: ${transactionType}`);
@@ -209,15 +213,22 @@ async function handleProviderCallback(paymentId, outcome, beforeFinalize) {
         paymentId,
         payment.amount,
       ]);
-      // Phase 3: commission comes from the payment's university fee schedule (falls back to the platform default).
+      // Phase 3: fee schedule rate is only the fallback; shop sale 10%, ticket 10%, rental 5% (deposit excluded).
       const fees = await getFees(payment.university_id, client);
-      const commission = Math.round(Number(payment.amount) * fees.commissionRate * 100) / 100;
-      if (commission > 0 && payment.provider !== "manual") {
+      const rate = commissions.rateFor(payment.transaction_type, fees.commissionRate);
+      const base = finalizer.commissionBase
+        ? await finalizer.commissionBase(payment.transaction_id, client, payment)
+        : Number(payment.amount);
+      const commission = commissions.round2(base * rate);
+      if (commission > 0) {
         await client.query("INSERT INTO transactions (payment_id, type, amount) VALUES ($1,'commission',$2)", [
           paymentId,
           commission,
         ]);
       }
+      // Per-seller ledger: the seller owes this commission to the platform (manual payments never
+      // pass through CampusHub, so it is settled with the admin afterwards).
+      await commissions.record(client, { payment, finalizer, base, rate, commission });
       await finalizer.onConfirmed(payment.transaction_id, client);
     } else {
       await client.query("UPDATE payments SET status='failed' WHERE id=$1", [paymentId]);
@@ -237,6 +248,7 @@ async function refundPayment(paymentId, amount, reason, actorId) {
     if (refundAmount > Number(payment.amount)) throw badRequest("Refund amount exceeds the original payment");
 
     await client.query("UPDATE payments SET status='refunded' WHERE id=$1", [paymentId]);
+    await commissions.voidForPayment(client, paymentId);
     await client.query("INSERT INTO transactions (payment_id, type, amount) VALUES ($1,'refund',$2)", [
       paymentId,
       refundAmount,

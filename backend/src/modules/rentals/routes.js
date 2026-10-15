@@ -329,6 +329,14 @@ router.post(
 );
 
 payments.registerFinalizer("booking", {
+    // Commission is charged on the rental fee only — the deposit is the renter's money, returned afterwards.
+  commissionBase: async (bookingId, client, payment) => {
+    const { rows } = await client.query(
+      "SELECT ri.deposit FROM rental_bookings b JOIN rental_items ri ON ri.id = b.rental_item_id WHERE b.id = $1",
+      [bookingId]
+    );
+    return Math.max(0, Number(payment.amount) - Number(rows[0]?.deposit || 0));
+  },
     isOpen: async (bookingId, client) => {
     const { rows } = await client.query("SELECT status FROM rental_bookings WHERE id = $1", [bookingId]);
     return rows[0]?.status === "pending_payment";
