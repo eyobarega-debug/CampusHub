@@ -4,6 +4,7 @@ import { client } from "../api/client";
 import { useAuth, errMsg } from "../context/AuthContext";
 import { Badge, Button, Card, ErrorBanner, PageHeader, Spinner } from "../components/ui";
 import ReviewsPanel from "../components/ReviewsPanel";
+import { PAYMENT_METHOD, startCheckout } from "../api/checkout";
 
 export default function ProductDetail() {
   const { id } = useParams();
@@ -23,10 +24,8 @@ export default function ProductDetail() {
     setError("");
     setBusy(true);
     try {
-      const { data } = await client.post("/orders", { items: [{ productId: id, quantity: qty }] });
-      navigate(`/mock-checkout/${data.payment.paymentId}`, {
-        state: { amount: data.payment.amount, returnTo: "/orders", label: `Order for ${product.title}` },
-      });
+      const { data } = await client.post("/orders", { items: [{ productId: id, quantity: qty }], paymentMethod: PAYMENT_METHOD });
+      startCheckout(navigate, data.payment, { returnTo: "/orders", label: `Order for ${product.title}` });
     } catch (err) {
       setError(errMsg(err, "Could not place order"));
     } finally {

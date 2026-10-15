@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { client } from "../api/client";
 import { errMsg } from "../context/AuthContext";
 import { Badge, Card, EmptyState, ErrorBanner, PageHeader, Spinner, Button } from "../components/ui";
+import ManualPaymentStatus from "../components/ManualPaymentStatus";
 
 const STATUS_TONE = {
   pending_payment: "warn",
@@ -25,13 +26,18 @@ export default function Orders() {
     load();
   }, []);
 
-  async function cancel(id) {
+  async function cancel(o) {
     setError("");
     try {
-      await client.post(`/orders/${id}/cancel`, { reason: "Changed my mind" });
+      // An unpaid manual payment is cancelled through the payment so the seller's list updates too.
+      if (o.payment_provider === "manual" && o.payment_status === "pending") {
+        await client.post(`/payments/${o.payment_id}/cancel`, {});
+      } else {
+        await client.post(`/orders/${o.id}/cancel`, { reason: "Changed my mind" });
+      }
       await load();
     } catch (err) {
-      setError(errMsg(err, "Could not cancel order"));
+      setError(errMsg(err, "Could not cancel the order"));
     }
   }
 
@@ -53,10 +59,20 @@ export default function Orders() {
               </div>
               <div className="flex items-center gap-2">
                 <Badge tone={STATUS_TONE[o.status] || "slate"}>{o.status.replaceAll("_", " ")}</Badge>
-                {["pending_payment", "confirmed"].includes(o.status) && (
-                  <Button variant="outline" onClick={() => cancel(o.id)}>Cancel</Button>
+                {["pending_payment", "confirmed"].includes(o.status) && o.payment_status !== "under_review" && (
+                  <Button variant="outline" onClick={() => cancel(o)}>Cancel</Button>
                 )}
               </div>
+              {o.status === "pending_payment" && (
+                <ManualPaymentStatus
+                  paymentId={o.payment_id}
+                  status={o.payment_status}
+                  provider={o.payment_provider}
+                  rejectReason={o.payment_reject_reason}
+                  returnTo="/orders"
+                  label={`Order #${o.id.slice(0, 8)} · ${o.store_name}`}
+                />
+              )}
             </Card>
           ))}
         </div>

@@ -1,8 +1,7 @@
 import { useEffect, useState } from "react";
 import { client } from "../api/client";
 import { errMsg } from "../context/AuthContext";
-import { Badge, Button, Card, EmptyState, ErrorBanner, PageHeader, Spinner } from "../components/ui";
-
+import { Badge, Button, Card, EmptyState, ErrorBanner, PageHeader, Spinner } from "../components/ui";import ManualPaymentStatus from "../components/ManualPaymentStatus";
 const STATUS_TONE = { reserved: "warn", active: "ok", used: "slate", cancelled: "danger", expired: "danger" };
 
 export default function MyTickets() {
@@ -22,13 +21,13 @@ export default function MyTickets() {
     load();
   }, []);
 
-  async function cancel(id) {
+   async function cancelUnpaid(t) {
     setError("");
     try {
-      await client.post(`/tickets/${id}/cancel`, {});
+      await client.post(`/payments/${t.payment_id}/cancel`, {});
       await load();
     } catch (err) {
-      setError(errMsg(err, "Could not cancel ticket"));
+      setError(errMsg(err, "Could not cancel the reservation"));
     }
   }
 
@@ -60,8 +59,20 @@ export default function MyTickets() {
                   <Button variant="outline" className="mt-2" onClick={() => cancel(t.id)}>Cancel ticket</Button>
                 </div>
               )}
-              {t.status === "used" && (
-                <p className="mt-3 text-xs text-slate">Used at {t.used_at ? new Date(t.used_at).toLocaleString() : "—"}</p>
+                            {t.status === "reserved" && (
+                <>
+                  <ManualPaymentStatus
+                    paymentId={t.payment_id}
+                    status={t.payment_status}
+                    provider={t.payment_provider}
+                    rejectReason={t.payment_reject_reason}
+                    returnTo="/tickets"
+                    label={`Ticket: ${t.event_title}`}
+                  />
+                  {t.payment_status === "pending" && t.payment_provider === "manual" && (
+                    <Button variant="ghost" className="mt-2" onClick={() => cancelUnpaid(t)}>Cancel reservation</Button>
+                  )}
+                </>
               )}
             </Card>
           ))}

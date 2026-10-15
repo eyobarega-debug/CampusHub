@@ -28,10 +28,8 @@ export default function RentalDetail() {
     setError("");
     setBusy(true);
     try {
-      const { data } = await client.post(`/rentals/${id}/bookings`, dates);
-      navigate(`/mock-checkout/${data.payment.paymentId}`, {
-        state: { amount: data.payment.amount, returnTo: "/rentals/mine", label: `Rental: ${item.title}` },
-      });
+  const { data } = await client.post(`/rentals/${id}/bookings`, { ...dates, paymentMethod: PAYMENT_METHOD });
+      startCheckout(navigate, data.payment, { returnTo: "/rentals/mine", label: `Rental: ${item.title}` });
     } catch (err) {
       setError(errMsg(err, "Could not book this item"));
     } finally {

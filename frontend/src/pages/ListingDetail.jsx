@@ -60,10 +60,8 @@ export default function ListingDetail() {
   async function payInApp() {
     setError("");
     try {
-      const { data } = await client.post(`/listings/requests/${myRequest.request.id}/pay`, {});
-      navigate(`/mock-checkout/${data.payment.paymentId}`, {
-        state: { amount: data.payment.amount, returnTo: `/listings/${id}`, label: `Pay for "${listing.title}"` },
-      });
+      const { data } = await client.post(`/listings/requests/${myRequest.request.id}/pay`, { paymentMethod: PAYMENT_METHOD });
+      startCheckout(navigate, data.payment, { returnTo: `/listings/${id}`, label: `Pay for "${listing.title}"` });
     } catch (err) {
       setError(errMsg(err, "Could not start payment"));
     }

@@ -28,6 +28,9 @@ import Merchant from "./pages/Merchant";
 import MerchantApply from "./pages/MerchantApply";
 import Admin from "./pages/Admin";
 import Notifications from "./pages/Notifications";
+import ManualPayment from "./pages/ManualPayment";
+import PaymentApprovals from "./pages/PaymentApprovals";
+import PayoutAccounts from "./pages/PayoutAccounts";
 import Profile from "./pages/Profile";
 import MockCheckout from "./pages/MockCheckout";
 import NotFound from "./pages/NotFound";
@@ -81,6 +84,10 @@ export default function App() {
 
             <Route path="/notifications" element={<ProtectedRoute><Notifications /></ProtectedRoute>} />
             <Route path="/profile" element={<ProtectedRoute><Profile /></ProtectedRoute>} />
+
+            <Route path="/pay/manual/:paymentId" element={<ProtectedRoute><ManualPayment /></ProtectedRoute>} />
+            <Route path="/payment-approvals" element={<ProtectedRoute><PaymentApprovals /></ProtectedRoute>} />
+            <Route path="/payout-accounts" element={<ProtectedRoute><PayoutAccounts /></ProtectedRoute>} />
 
             <Route path="/mock-checkout/:paymentId" element={<ProtectedRoute><MockCheckout /></ProtectedRoute>} />
 

@@ -49,6 +49,7 @@ export default function Navbar() {
           {user?.role === "student" && <NavLink to="/orders" className={linkClass}>My Orders</NavLink>}
           {user?.role === "student" && <NavLink to="/tickets" className={linkClass}>My Tickets</NavLink>}
           {user && <NavLink to="/favorites" className={linkClass}>Favorites</NavLink>}
+          {user && <NavLink to="/payment-approvals" className={linkClass}>Payments</NavLink>}
           {user?.role === "merchant" && <NavLink to="/merchant" className={linkClass}>Merchant Dashboard</NavLink>}
           {user?.role === "organizer" && <NavLink to="/organizer" className={linkClass}>Organizer</NavLink>}
           {user?.role === "admin" && <NavLink to="/admin" className={linkClass}>Admin</NavLink>}

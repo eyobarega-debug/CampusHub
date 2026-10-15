@@ -29,10 +29,8 @@ export default function EventDetail() {
     setError("");
     setBusyId(ticketTypeId);
     try {
-      const { data } = await client.post(`/events/${id}/tickets`, { ticketTypeId });
-      navigate(`/mock-checkout/${data.payment.paymentId}`, {
-        state: { amount: data.payment.amount, returnTo: "/tickets", label: `Ticket: ${event.title}` },
-      });
+      const { data } = await client.post(`/events/${id}/tickets`, { ticketTypeId, paymentMethod: PAYMENT_METHOD });
+      startCheckout(navigate, data.payment, { returnTo: "/tickets", label: `Ticket: ${event.title}` });
     } catch (err) {
       setError(errMsg(err, "Could not reserve ticket"));
       setBusyId(null);
