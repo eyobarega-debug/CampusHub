@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { useAuth } from "../context/AuthContext";
 import { client } from "../api/client";
 import { Button, Badge } from "./ui";
+import { visibleTabs } from "../config/roles";
 
 const linkClass = ({ isActive }) =>
   `rounded-lg px-3 py-1.5 text-sm font-medium transition ${
@@ -42,22 +43,11 @@ export default function Navbar() {
         </Link>
 
         <div className="flex flex-1 flex-wrap items-center gap-1">
-          <NavLink to="/marketplace" className={linkClass}>Marketplace</NavLink>
-          <NavLink to="/listings" className={linkClass}>P2P</NavLink>
-          <NavLink to="/rentals" className={linkClass}>Rentals</NavLink>
-          <NavLink to="/events" className={linkClass}>Events</NavLink>
-          {user?.role === "student" && <NavLink to="/orders" className={linkClass}>My Orders</NavLink>}
-          {user?.role === "student" && <NavLink to="/tickets" className={linkClass}>My Tickets</NavLink>}
-          {user && <NavLink to="/favorites" className={linkClass}>Favorites</NavLink>}
-          {user && <NavLink to="/payment-approvals" className={linkClass}>Payments</NavLink>}
-          {user && (
-            <NavLink to={["admin", "super_admin"].includes(user.role) ? "/admin/commissions" : "/commissions"} className={linkClass}>
-              Commissions
+          {visibleTabs(user).map((t) => (
+            <NavLink key={t.key} to={t.to} className={linkClass}>
+              {t.label}
             </NavLink>
-          )}
-          {user?.role === "merchant" && <NavLink to="/merchant" className={linkClass}>Merchant Dashboard</NavLink>}
-          {user?.role === "organizer" && <NavLink to="/organizer" className={linkClass}>Organizer</NavLink>}
-          {user?.role === "admin" && <NavLink to="/admin" className={linkClass}>Admin</NavLink>}
+          ))}
         </div>
 
         <div className="flex items-center gap-3">

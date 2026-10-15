@@ -36,6 +36,7 @@ import MockCheckout from "./pages/MockCheckout";
 import NotFound from "./pages/NotFound";
 import Commissions from "./pages/Commissions";
 import AdminCommissions from "./pages/AdminCommissions";
+import { ADMIN_ROLES } from "./config/roles";
 
 function Layout({ children }) {
   return (
@@ -60,7 +61,7 @@ export default function App() {
 
             <Route path="/marketplace" element={<Marketplace />} />
             <Route path="/marketplace/:id" element={<ProductDetail />} />
-            <Route path="/orders" element={<ProtectedRoute role="student"><Orders /></ProtectedRoute>} />
+            <Route path="/orders" element={<ProtectedRoute role={["student", ...ADMIN_ROLES]}><Orders /></ProtectedRoute>} />
             <Route path="/favorites" element={<ProtectedRoute><Favorites /></ProtectedRoute>} />
 
             <Route path="/listings" element={<Listings />} />
@@ -74,15 +75,15 @@ export default function App() {
 
             <Route path="/events" element={<Events />} />
             <Route path="/events/:id" element={<EventDetail />} />
-            <Route path="/tickets" element={<ProtectedRoute role="student"><MyTickets /></ProtectedRoute>} />
+            <Route path="/tickets" element={<ProtectedRoute role={["student", ...ADMIN_ROLES]}><MyTickets /></ProtectedRoute>} />
 
-            <Route path="/organizer" element={<ProtectedRoute role="organizer"><OrganizerEvents /></ProtectedRoute>} />
-            <Route path="/organizer/:id" element={<ProtectedRoute role={["organizer", "admin"]}><OrganizerEventDetail /></ProtectedRoute>} />
+            <Route path="/organizer" element={<ProtectedRoute role={["organizer", ...ADMIN_ROLES]}><OrganizerEvents /></ProtectedRoute>} />
+            <Route path="/organizer/:id" element={<ProtectedRoute role={["organizer", ...ADMIN_ROLES]}><OrganizerEventDetail /></ProtectedRoute>} />
 
             <Route path="/merchant-apply" element={<ProtectedRoute role="student"><MerchantApply /></ProtectedRoute>} />
-            <Route path="/merchant" element={<ProtectedRoute role="merchant"><Merchant /></ProtectedRoute>} />
+            <Route path="/merchant" element={<ProtectedRoute role={["merchant", ...ADMIN_ROLES]}><Merchant /></ProtectedRoute>} />
 
-            <Route path="/admin" element={<ProtectedRoute role="admin"><Admin /></ProtectedRoute>} />
+            <Route path="/admin" element={<ProtectedRoute role={ADMIN_ROLES}><Admin /></ProtectedRoute>} />
 
             <Route path="/notifications" element={<ProtectedRoute><Notifications /></ProtectedRoute>} />
             <Route path="/profile" element={<ProtectedRoute><Profile /></ProtectedRoute>} />
@@ -90,7 +91,7 @@ export default function App() {
             <Route path="/pay/manual/:paymentId" element={<ProtectedRoute><ManualPayment /></ProtectedRoute>} />
             <Route path="/payment-approvals" element={<ProtectedRoute><PaymentApprovals /></ProtectedRoute>} />
             <Route path="/commissions" element={<ProtectedRoute><Commissions /></ProtectedRoute>} />
-            <Route path="/admin/commissions" element={<ProtectedRoute role={["admin", "super_admin"]}><AdminCommissions /></ProtectedRoute>} />
+            <Route path="/admin/commissions" element={<ProtectedRoute role={ADMIN_ROLES}><AdminCommissions /></ProtectedRoute>} />
             <Route path="/payout-accounts" element={<ProtectedRoute><PayoutAccounts /></ProtectedRoute>} />
 
             <Route path="/mock-checkout/:paymentId" element={<ProtectedRoute><MockCheckout /></ProtectedRoute>} />

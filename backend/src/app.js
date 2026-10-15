@@ -14,7 +14,16 @@ const app = express();
 // etc.). CSP is disabled here because this app serves a JSON API only —
 // the frontend is a separate Vite/React app with its own CSP concerns.
 app.use(helmet({ contentSecurityPolicy: false }));
-app.use(cors());
+const allowedOrigins = (process.env.CORS_ORIGINS || "http://localhost:5173,http://localhost:4173")
+  .split(",")
+  .map((origin) => origin.trim())
+  .filter(Boolean);
+app.use(cors({
+  origin(origin, callback) {
+    // Requests without Origin include health checks and server-to-server calls.
+    callback(null, !origin || allowedOrigins.includes(origin));
+  },
+}));
 app.use(express.json({ limit: "2mb" }));
 app.use(morgan(process.env.NODE_ENV === "test" ? "tiny" : "dev"));
 app.use("/uploads", express.static(require("path").join(__dirname, "..", "uploads")));

@@ -106,12 +106,21 @@ router.patch(
   })
 );
 
-// Merchant: fetch my own store
 router.get(
   "/stores/mine",
   requireAuth(),
-  requireRole("merchant"),
+  requireRole("merchant", "admin", "super_admin"),
   asyncHandler(async (req, res) => {
+    if (["admin", "super_admin"].includes(req.user.role)) {
+      const params = [];
+      const conds = [];
+      if (req.query.storeId) { params.push(req.query.storeId); conds.push(`id = $${params.length}`); }
+      if (req.user.role === "admin") { params.push(req.user.university_id); conds.push(`university_id = $${params.length}`); }
+      const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
+      const { rows } = await db.query(`SELECT * FROM stores ${where} ORDER BY created_at DESC LIMIT 1`, params);
+      if (!rows[0]) throw notFound("No store found");
+      return res.json({ store: rows[0] });
+    }
     const { rows } = await db.query("SELECT * FROM stores WHERE merchant_id = $1 ORDER BY created_at DESC LIMIT 1", [req.user.id]);
     if (!rows[0]) throw notFound("No store found for this merchant yet");
     res.json({ store: rows[0] });

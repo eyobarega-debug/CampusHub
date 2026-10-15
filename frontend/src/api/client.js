@@ -44,7 +44,10 @@ client.interceptors.response.use(
             refreshing = null;
           });
         const { data } = await refreshing;
-        setTokens({ accessToken: data.accessToken, refreshToken: tokens.refreshToken });
+        // The API rotates the refresh token on every successful exchange.
+        // Persist both returned tokens so the next refresh does not reuse a
+        // token that the server has already revoked.
+        setTokens({ accessToken: data.accessToken, refreshToken: data.refreshToken });
         original.headers.Authorization = `Bearer ${data.accessToken}`;
         return client(original);
       } catch (refreshErr) {

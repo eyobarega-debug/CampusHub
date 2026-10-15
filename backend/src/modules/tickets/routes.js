@@ -36,6 +36,7 @@ router.get(
   "/mine",
   requireAuth(),
   asyncHandler(async (req, res) => {
+    const isAdmin = ["admin", "super_admin"].includes(req.user.role); // admins see all tickets
     const { rows } = await db.query(
       `SELECT t.*, e.title AS event_title, e.date_time, e.location, tt.name AS ticket_type, tt.price,
               lp.id AS payment_id, lp.status AS payment_status, lp.provider AS payment_provider,
@@ -46,8 +47,9 @@ router.get(
                 (SELECT reject_reason FROM payment_proofs WHERE payment_id = p.id AND status = 'rejected' ORDER BY created_at DESC LIMIT 1) AS reject_reason
            FROM payments p WHERE p.transaction_type = 'ticket' AND p.transaction_id = t.id ORDER BY p.created_at DESC LIMIT 1
        ) lp ON true
-       WHERE t.holder_id = $1 ORDER BY t.created_at DESC`,
-      [req.user.id]
+       ${isAdmin ? (req.user.role === "admin" ? "WHERE e.university_id = $1" : "WHERE $1::text IS NOT NULL") : "WHERE t.holder_id = $1"}
+       ORDER BY t.created_at DESC`,
+      [isAdmin ? (req.user.role === "admin" ? req.user.university_id : "all") : req.user.id]
     );
     const withQr = await Promise.all(
       rows.map(async (t) => {
