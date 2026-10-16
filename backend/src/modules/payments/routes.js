@@ -3,6 +3,7 @@ const { z } = require("zod");
 const db = require("../../db");
 const { requireAuth, requireRole } = require("../../middleware/auth");
 const { validate } = require("../../middleware/validate");
+const { assertSameTenant } = require("../../middleware/tenant");
 const { asyncHandler, notFound, forbidden } = require("../../utils/errors");
 const paymentsService = require("../../services/payments");
 
@@ -14,6 +15,7 @@ router.get(
   asyncHandler(async (req, res) => {
     const { rows } = await db.query("SELECT * FROM payments WHERE id = $1", [req.params.id]);
     if (!rows[0]) throw notFound("Payment not found");
+    assertSameTenant(req, rows[0].university_id, "Payment");
     res.json({ payment: rows[0] });
   })
 );
@@ -30,6 +32,7 @@ router.post(
     const { rows } = await db.query("SELECT * FROM payments WHERE id = $1", [req.params.id]);
     const payment = rows[0];
     if (!payment) throw notFound("Payment not found");
+    assertSameTenant(req, payment.university_id, "Payment");
         // Manual payments are confirmed only by the payee's approval — never by the buyer.
     if (payment.provider === "manual") throw forbidden("This payment is confirmed by the seller, not by the checkout simulator");
     // A real webhook has no notion of "the logged-in user" — this check is a
@@ -87,6 +90,9 @@ router.post(
   requireRole("admin"),
   validate({ body: z.object({ amount: z.number().nonnegative().optional(), reason: z.string().optional() }) }),
   asyncHandler(async (req, res) => {
+        const { rows } = await db.query("SELECT university_id FROM payments WHERE id = $1", [req.params.id]);
+    if (!rows[0]) throw notFound("Payment not found");
+    assertSameTenant(req, rows[0].university_id, "Payment"); // an admin can only refund their own university's payments
     const payment = await paymentsService.refundPayment(req.params.id, req.body.amount, req.body.reason, req.user.id);
     res.json({ payment });
   })

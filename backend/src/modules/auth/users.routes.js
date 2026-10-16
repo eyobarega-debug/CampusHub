@@ -12,7 +12,7 @@ router.get(
   requireAuth(),
   asyncHandler(async (req, res) => {
     const { rows } = await db.query(
-      `SELECT id, name, email, phone, role, university_id, verified, avatar_url, bio,
+      `SELECT id, name, email, phone, role, university_id, verified, verification_method, avatar_url, bio,
               notification_prefs, created_at
        FROM users WHERE id = $1`,
       [req.user.id]

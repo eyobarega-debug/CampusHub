@@ -32,6 +32,7 @@ import ManualPayment from "./pages/ManualPayment";
 import PaymentApprovals from "./pages/PaymentApprovals";
 import PayoutAccounts from "./pages/PayoutAccounts";
 import Profile from "./pages/Profile";
+import VerifyCampus from "./pages/VerifyCampus";
 import MockCheckout from "./pages/MockCheckout";
 import NotFound from "./pages/NotFound";
 import Commissions from "./pages/Commissions";
@@ -87,6 +88,7 @@ export default function App() {
 
             <Route path="/notifications" element={<ProtectedRoute><Notifications /></ProtectedRoute>} />
             <Route path="/profile" element={<ProtectedRoute><Profile /></ProtectedRoute>} />
+            <Route path="/verify" element={<ProtectedRoute><VerifyCampus /></ProtectedRoute>} />
 
             <Route path="/pay/manual/:paymentId" element={<ProtectedRoute><ManualPayment /></ProtectedRoute>} />
             <Route path="/payment-approvals" element={<ProtectedRoute><PaymentApprovals /></ProtectedRoute>} />

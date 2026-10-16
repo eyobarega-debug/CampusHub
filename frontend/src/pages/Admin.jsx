@@ -2,8 +2,9 @@ import { useEffect, useState } from "react";
 import { client } from "../api/client";
 import { errMsg } from "../context/AuthContext";
 import { Badge, Button, Card, ErrorBanner, Input, PageHeader, Select, Spinner, SuccessBanner, TextArea } from "../components/ui";
+import VerificationDocument from "../components/VerificationDocument";
 
-const TABS = ["Merchants", "Events", "Reports & Disputes", "Users", "Clubs", "Analytics", "Audit Log"];
+const TABS = ["Merchants", "Events", "Reports & Disputes", "Users", "Clubs", "Verifications", "Analytics", "Audit Log"];
 
 export default function Admin() {
   const [tab, setTab] = useState("Merchants");
@@ -26,6 +27,7 @@ export default function Admin() {
       {tab === "Reports & Disputes" && <ReportsTab />}
       {tab === "Users" && <UsersTab />}
       {tab === "Clubs" && <ClubsTab />}
+      {tab === "Verifications" && <VerificationsTab />}
       {tab === "Analytics" && <AnalyticsTab />}
       {tab === "Audit Log" && <AuditLogTab />}
     </div>
@@ -344,6 +346,229 @@ function ClubsTab() {
             </Card>
           ))}
         </div>
+      )}
+    </div>
+  );
+}
+
+const VERIF_DOC_LABELS = {
+  student_id: "Student ID",
+  university_id_card: "University ID card",
+  proof_of_enrollment: "Proof of enrollment",
+  other: "Other proof",
+};
+const VERIF_STATUS_TONES = { pending: "warn", approved: "ok", rejected: "danger" };
+
+function VerificationsTab() {
+  const [items, setItems] = useState(null);
+  const [selected, setSelected] = useState(null);
+  const [status, setStatus] = useState("pending");
+  const [search, setSearch] = useState("");
+  const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [rejecting, setRejecting] = useState(false);
+  const [rejectReason, setRejectReason] = useState("");
+
+  async function load() {
+    setError("");
+    try {
+      const { data } = await client.get("/admin/verifications/requests", {
+        params: { status, q: search || undefined },
+      });
+      setItems(data.requests);
+    } catch (err) {
+      setError(errMsg(err, "Could not load verification requests"));
+    }
+  }
+  useEffect(() => {
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [status]);
+
+  async function open(r) {
+    setError("");
+    setSuccess("");
+    setRejecting(false);
+    setRejectReason("");
+    setSelected(null);
+    try {
+      const { data } = await client.get(`/admin/verifications/requests/${r.id}`);
+      setSelected(data.request);
+    } catch (err) {
+      setError(errMsg(err, "Could not load request details"));
+    }
+  }
+
+  async function decide(action) {
+    setBusy(true);
+    setError("");
+    setSuccess("");
+    try {
+      if (action === "approve") {
+        await client.patch(`/admin/verifications/requests/${selected.id}/approve`);
+        setSuccess("Request approved — the student's account is now campus verified.");
+      } else {
+        await client.patch(`/admin/verifications/requests/${selected.id}/reject`, {
+          rejectionReason: rejectReason.trim(),
+        });
+        setSuccess("Request rejected — the student will see your reason.");
+      }
+      setSelected(null);
+      setRejecting(false);
+      setRejectReason("");
+      await load();
+    } catch (err) {
+      setError(errMsg(err, "Could not record decision"));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="space-y-6">
+      <ErrorBanner message={error} />
+      <SuccessBanner message={success} />
+
+      <div className="flex flex-wrap items-end gap-2">
+        <Select label="Status" value={status} onChange={(e) => setStatus(e.target.value)} className="max-w-[180px]">
+          <option value="pending">Pending</option>
+          <option value="approved">Approved</option>
+          <option value="rejected">Rejected</option>
+          <option value="all">All (pending first)</option>
+        </Select>
+        <form
+          className="flex gap-2"
+          onSubmit={(e) => {
+            e.preventDefault();
+            load();
+          }}
+        >
+          <Input
+            placeholder="Search by student name or email"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="max-w-xs"
+          />
+          <Button type="submit">Search</Button>
+        </form>
+      </div>
+
+      {!items ? (
+        <Spinner />
+      ) : items.length === 0 ? (
+        <p className="text-sm text-slate">
+          {status === "pending" ? "No pending verification requests." : "No verification requests match this filter."}
+        </p>
+      ) : (
+        <div className="space-y-2">
+          {items.map((r) => (
+            <Card
+              key={r.id}
+              className={`flex flex-wrap items-center justify-between gap-3 p-4 ${
+                selected?.id === r.id ? "border-navy/40" : ""
+              }`}
+            >
+              <div>
+                <p className="font-medium text-navy">
+                  {r.studentName} <span className="text-xs font-normal text-slate">({r.studentEmail})</span>
+                </p>
+                <p className="text-xs text-slate">
+                  {VERIF_DOC_LABELS[r.documentType] || r.documentType} · {r.universityName} · submitted{" "}
+                  {new Date(r.createdAt).toLocaleString()}
+                </p>
+                {r.status === "rejected" && r.rejectionReason && (
+                  <p className="text-xs text-danger">Rejected: {r.rejectionReason}</p>
+                )}
+              </div>
+              <div className="flex items-center gap-2">
+                <Badge tone={VERIF_STATUS_TONES[r.status] || "slate"}>{r.status}</Badge>
+                <Button variant="outline" onClick={() => open(r)}>
+                  Review
+                </Button>
+              </div>
+            </Card>
+          ))}
+        </div>
+      )}
+
+      {selected && (
+        <Card className="p-5">
+          <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h3 className="font-semibold text-navy">Review request</h3>
+              <p className="text-sm text-slate">
+                {selected.studentName} · {selected.studentEmail}
+                {selected.studentPhone ? ` · ${selected.studentPhone}` : ""}
+              </p>
+              <p className="text-xs text-slate">
+                {selected.universityName} · {VERIF_DOC_LABELS[selected.documentType] || selected.documentType} ·
+                submitted {new Date(selected.createdAt).toLocaleString()}
+              </p>
+              <div className="mt-1">
+                <Badge tone={VERIF_STATUS_TONES[selected.status] || "slate"}>{selected.status}</Badge>
+              </div>
+            </div>
+            <Button variant="ghost" onClick={() => setSelected(null)}>Close</Button>
+          </div>
+
+          {selected.studentNote && (
+            <div className="mb-3 rounded-lg bg-slate/5 px-3 py-2 text-sm text-slate">
+              <span className="font-medium text-navy">Student note:</span> {selected.studentNote}
+            </div>
+          )}
+          {selected.status === "rejected" && selected.rejectionReason && (
+            <div className="mb-3 rounded-lg bg-danger/10 px-3 py-2 text-sm text-danger">
+              <span className="font-medium">Rejection reason:</span> {selected.rejectionReason}
+            </div>
+          )}
+          {selected.status === "approved" && selected.reviewerName && (
+            <p className="mb-3 text-xs text-slate">
+              Approved by {selected.reviewerName} on {new Date(selected.reviewedAt).toLocaleString()}
+            </p>
+          )}
+
+          <div className="mb-4">
+            <p className="mb-2 text-sm font-medium text-navy">Submitted document</p>
+            <VerificationDocument url={`/admin/verifications/requests/${selected.id}/document`} />
+          </div>
+
+          {selected.status === "pending" && (
+            <div className="space-y-3">
+              <div className="flex flex-wrap gap-2">
+                <Button variant="accent" disabled={busy} onClick={() => decide("approve")}>
+                  {busy ? "Saving..." : "Approve verification"}
+                </Button>
+                <Button
+                  variant="danger"
+                  disabled={busy}
+                  onClick={() => setRejecting((v) => !v)}
+                >
+                  Reject
+                </Button>
+              </div>
+              {rejecting && (
+                <div className="space-y-2 rounded-lg border border-slate/20 p-3">
+                  <TextArea
+                    label="Rejection reason (required)"
+                    rows={3}
+                    required
+                    placeholder="e.g. The uploaded ID photo is unreadable"
+                    value={rejectReason}
+                    onChange={(e) => setRejectReason(e.target.value)}
+                  />
+                  <Button
+                    variant="danger"
+                    disabled={busy || rejectReason.trim().length < 2}
+                    onClick={() => decide("reject")}
+                  >
+                    Confirm rejection
+                  </Button>
+                </div>
+              )}
+            </div>
+          )}
+        </Card>
       )}
     </div>
   );

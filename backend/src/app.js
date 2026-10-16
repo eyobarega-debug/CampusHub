@@ -51,7 +51,12 @@ app.use("/api/payout-accounts", tenant, require("./modules/payments/payout.route
 app.use("/api/commissions", tenant, require("./modules/commissions/routes"));
 app.use("/api/payments", tenant, require("./modules/payments/routes"));
 app.use("/api/super", require("./modules/super/routes"));
+// Verified campus accounts: student submission/status + admin review queue.
+// Mounted BEFORE /api/admin so the admin router's blanket middleware never
+// intercepts these paths.
+app.use("/api/admin/verifications", tenant, require("./modules/verifications/admin.routes"));
 app.use("/api/admin", tenant, require("./modules/admin/routes"));
+app.use("/api/verifications", tenant, require("./modules/verifications/routes"));
 app.use("/api/meta", require("./modules/meta/routes"));
 app.use("/api/uploads", require("./modules/uploads/routes"));
 

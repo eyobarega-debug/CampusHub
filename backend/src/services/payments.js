@@ -45,8 +45,8 @@ const finalizers = {};
 //   commissionBase(transactionId, client, payment) — optional. What the platform commission is
 //                                        charged on (rentals: the fee without the refundable
 //                                        deposit). Defaults to the whole payment amount.
-function registerFinalizer(transactionType, { onConfirmed, onFailed, getRecipient, isOpen, commissionBase }) {
-  finalizers[transactionType] = { onConfirmed, onFailed, getRecipient, isOpen, commissionBase };
+function registerFinalizer(transactionType, { onConfirmed, onFailed, getRecipient, isOpen, commissionBase, onRefunded }) {
+  finalizers[transactionType] = { onConfirmed, onFailed, getRecipient, isOpen, commissionBase, onRefunded };
 }
 async function initiatePayment({ transactionType, transactionId, amount, buyerId, buyerEmail, method }) {
   if (!finalizers[transactionType]) throw badRequest(`Unknown transaction type: ${transactionType}`);
@@ -254,6 +254,10 @@ async function refundPayment(paymentId, amount, reason, actorId) {
       refundAmount,
     ]);
     await audit(actorId, "payment.refund", payment.transaction_type, payment.transaction_id, { paymentId, refundAmount, reason });
+        const finalizer = finalizers[payment.transaction_type];
+    if (finalizer && finalizer.onRefunded && refundAmount >= Number(payment.amount)) {
+      await finalizer.onRefunded(payment.transaction_id, client, { payment, refundAmount, reason, actorId });
+    }
     return payment;
   });
 }

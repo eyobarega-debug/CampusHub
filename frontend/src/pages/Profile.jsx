@@ -1,3 +1,4 @@
+import { Link } from "react-router-dom";
 import { useState } from "react";
 import { client } from "../api/client";
 import { useAuth, errMsg } from "../context/AuthContext";
@@ -75,6 +76,26 @@ export default function Profile() {
 
           <Button type="submit" disabled={saving}>{saving ? "Saving..." : "Save changes"}</Button>
         </form>
+      </Card>
+
+      <Card className="mt-6 p-6">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <p className="font-medium text-navy">Campus verification</p>
+            <p className="mt-1 text-sm text-slate">
+              {user.verified
+                ? user.verification_method === "domain"
+                  ? "Your account was verified automatically through your university email."
+                  : "Your account has been verified by a university administrator."
+                : "Your university email couldn't verify you automatically. Submit official proof of campus membership."}
+            </p>
+          </div>
+          {user.verified ? (
+            <Badge tone="ok">campus verified</Badge>
+          ) : (
+            <Button as={Link} to="/verify" variant="accent">Verify Campus Account</Button>
+          )}
+        </div>
       </Card>
     </div>
   );
