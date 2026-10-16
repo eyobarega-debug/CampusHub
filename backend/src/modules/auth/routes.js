@@ -102,12 +102,13 @@ router.post(
     const { email, password } = req.body;
     const { rows } = await db.query("SELECT * FROM users WHERE email = $1", [email.toLowerCase()]);
     const user = rows[0];
-    // Same generic error whether the email doesn't exist or the password is
-    // wrong — SRS FR-003 alternative flow: no hint about which field failed.
     if (!user || !(await comparePassword(password, user.password_hash))) {
       throw unauthorized("Invalid email or password");
     }
-    if (user.suspended) throw forbidden("This account has been suspended. Contact a university administrator.");
+    if (user.suspended) throw forbidden("This account has been suspended. Contact a university administrator.", "ACCOUNT_SUSPENDED");
+    if (!user.email_verified) {
+      throw forbidden("Please verify your email address before logging in.", "EMAIL_NOT_VERIFIED");
+    }
 
     const accessToken = signAccessToken(user);
     const refreshToken = generateRefreshToken();
@@ -199,6 +200,14 @@ router.post(
       throw unauthorized("Refresh token reuse detected — all sessions revoked. Please log in again.");
     }
 
+    const { rows: userRows } = await db.query("SELECT * FROM users WHERE id = $1", [stored.user_id]);
+    const user = userRows[0];
+    if (!user) throw unauthorized("Account no longer exists");
+    if (user.suspended) throw forbidden("This account has been suspended. Contact a university administrator.", "ACCOUNT_SUSPENDED");
+    if (!user.email_verified) {
+      throw forbidden("Please verify your email address before continuing.", "EMAIL_NOT_VERIFIED");
+    }
+
     await db.query("UPDATE refresh_tokens SET revoked = true WHERE id = $1", [stored.id]);
     const newRefreshToken = generateRefreshToken();
     await db.query(
@@ -207,8 +216,7 @@ router.post(
       [stored.user_id, hashToken(newRefreshToken), stored.family_id]
     );
 
-    const { rows: userRows } = await db.query("SELECT * FROM users WHERE id = $1", [stored.user_id]);
-    const accessToken = signAccessToken(userRows[0]);
+    const accessToken = signAccessToken(user);
     res.json({ accessToken, refreshToken: newRefreshToken });
   })
 );

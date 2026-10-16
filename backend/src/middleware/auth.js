@@ -14,12 +14,13 @@ function requireAuth() {
       const payload = verifyAccessToken(token);
 
       const { rows } = await db.query(
-        "SELECT id, role, suspended, university_id, verified, name, email FROM users WHERE id = $1",
+        "SELECT id, role, suspended, university_id, verified, name, email, email_verified FROM users WHERE id = $1",
         [payload.sub]
       );
       const user = rows[0];
       if (!user) throw unauthorized("Account no longer exists");
-      if (user.suspended) throw forbidden("This account has been suspended");
+      if (user.suspended) throw forbidden("This account has been suspended", "ACCOUNT_SUSPENDED");
+      if (user.email_verified === false) throw forbidden("Please verify your email address", "EMAIL_NOT_VERIFIED");
 
       req.user = user;
       next();

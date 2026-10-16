@@ -1,6 +1,6 @@
 const db = require("../db");
 const { notify, audit } = require("../utils/notify");
-const { badRequest, notFound, conflict } = require("../utils/errors");
+const { badRequest, notFound, conflict, unauthorized, ApiError } = require("../utils/errors");
 
 const mockProvider = require("./providers/mock");
 const chapaProvider = require("./providers/chapa");
@@ -55,9 +55,9 @@ async function initiatePayment({ transactionType, transactionId, amount, buyerId
   // ...rest unchanged
 
   const { rows } = await db.query(
-    `INSERT INTO payments (transaction_type, transaction_id, provider, amount, status)
-     VALUES ($1,$2,$3,$4,'pending') RETURNING *`,
-    [transactionType, transactionId, provider.name, amount]
+    `INSERT INTO payments (transaction_type, transaction_id, provider, amount, status, payer_id, currency)
+     VALUES ($1,$2,$3,$4,'pending',$5,'ETB') RETURNING *`,
+    [transactionType, transactionId, provider.name, amount, buyerId]
   );
   const payment = rows[0];
   await audit(buyerId, "payment.initiate", transactionType, transactionId, { paymentId: payment.id, amount, provider: provider.name });
@@ -262,7 +262,157 @@ async function refundPayment(paymentId, amount, reason, actorId) {
   });
 }
 
+async function processChapaWebhook({ rawBody, signature, payload }) {
+  // 1. Verify webhook signature
+  const validSignature = chapaProvider.verifyWebhookSignature(rawBody, signature);
+  if (!validSignature) {
+    throw unauthorized("Invalid or missing Chapa webhook signature", "INVALID_SIGNATURE");
+  }
+
+  // 2. Extract transaction reference (supporting Chapa v2 merchant_reference and legacy formats)
+  const txRef =
+    payload?.merchant_reference ||
+    payload?.data?.merchant_reference ||
+    payload?.tx_ref ||
+    payload?.trx_ref ||
+    payload?.data?.tx_ref ||
+    payload?.data?.trx_ref;
+
+  if (!txRef || typeof txRef !== "string" || !txRef.trim()) {
+    throw badRequest("Missing transaction reference in webhook payload", "MISSING_TX_REF");
+  }
+
+  const cleanTxRef = txRef.trim();
+  const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(cleanTxRef);
+  if (!isUuid) {
+    throw notFound("Payment not found");
+  }
+
+  // 3. Atomically lock payment row and process
+  const result = await db.withTransaction(async (client) => {
+    const { rows } = await client.query("SELECT * FROM payments WHERE id = $1 FOR UPDATE", [cleanTxRef]);
+    const payment = rows[0];
+    if (!payment) throw notFound("Payment not found");
+
+    if (payment.provider !== "chapa") {
+      throw badRequest(`Cannot process webhook for payment provider "${payment.provider}"`, "INVALID_PAYMENT_PROVIDER");
+    }
+
+    // Idempotency: if already confirmed, acknowledge without reprocessing
+    if (payment.status === "confirmed") {
+      return { status: "success", message: "Payment already confirmed", idempotent: true, paymentId: payment.id };
+    }
+
+    if (payment.status !== "pending") {
+      throw conflict(`Payment cannot be processed because status is "${payment.status}"`, "PAYMENT_NOT_PENDING");
+    }
+
+    const finalizer = finalizers[payment.transaction_type];
+    if (!finalizer) throw badRequest(`No finalizer registered for ${payment.transaction_type}`);
+
+    // 4. Server-to-server verification with Chapa API
+    let verification;
+    try {
+      verification = await chapaProvider.verify(payment.id);
+    } catch (err) {
+      console.error(`[payments] Chapa verification API error for payment ${payment.id}:`, err.message);
+      const isUpstream =
+        err.isUpstreamError ||
+        err.name === "TimeoutError" ||
+        err.code === "ETIMEDOUT" ||
+        err.code === "ECONNREFUSED" ||
+        err.code === "ENOTFOUND" ||
+        err.code === "GATEWAY_TIMEOUT" ||
+        err.code === "BAD_GATEWAY" ||
+        (err.status && err.status >= 500) ||
+        err.status === 429;
+
+      if (isUpstream) {
+        const isTimeout =
+          err.name === "TimeoutError" ||
+          err.code === "ETIMEDOUT" ||
+          err.status === 504 ||
+          err.code === "GATEWAY_TIMEOUT";
+        const statusCode = err.status === 429 ? 429 : (isTimeout ? 504 : 502);
+        const code = err.status === 429 ? "RATE_LIMITED" : (isTimeout ? "GATEWAY_TIMEOUT" : "BAD_GATEWAY");
+        // Throwing will cause db.withTransaction to ROLLBACK, leaving payment status as 'pending'
+        throw new ApiError(statusCode, `Payment verification temporarily unavailable: ${err.message}`, code);
+      }
+
+      throw badRequest(`Provider verification failed: ${err.message}`, "VERIFICATION_FAILED");
+    }
+
+    if (!verification || !verification.success) {
+      await client.query("UPDATE payments SET status = 'failed' WHERE id = $1", [payment.id]);
+      await finalizer.onFailed(payment.transaction_id, client);
+      return { status: "failed", message: "Payment verification failed at provider", paymentId: payment.id };
+    }
+
+    // Reference integrity check
+    if (verification.txRef && verification.txRef !== payment.id) {
+      await client.query("UPDATE payments SET status = 'failed' WHERE id = $1", [payment.id]);
+      await finalizer.onFailed(payment.transaction_id, client);
+      return { error: { code: "REFERENCE_MISMATCH", message: "Transaction reference mismatch during verification" } };
+    }
+
+    // Amount integrity check (prevent underpayment/tampering)
+    if (verification.amount != null && Number(verification.amount) !== Number(payment.amount)) {
+      await client.query("UPDATE payments SET status = 'failed' WHERE id = $1", [payment.id]);
+      await finalizer.onFailed(payment.transaction_id, client);
+      return { error: { code: "AMOUNT_MISMATCH", message: "Payment amount mismatch during verification" } };
+    }
+
+    // Currency integrity check (must match expected ETB)
+    const expectedCurrency = (payment.currency || "ETB").toUpperCase();
+    if (verification.currency && verification.currency.toUpperCase() !== expectedCurrency) {
+      await client.query("UPDATE payments SET status = 'failed' WHERE id = $1", [payment.id]);
+      await finalizer.onFailed(payment.transaction_id, client);
+      return { error: { code: "CURRENCY_MISMATCH", message: "Payment currency mismatch during verification" } };
+    }
+
+    // 5. Successful verification: confirm payment
+    const providerRef =
+      verification.chapa_reference ||
+      verification.reference ||
+      verification.txRef ||
+      `CHAPA-${payment.id.slice(0, 8)}`;
+    await client.query(
+      "UPDATE payments SET status = 'confirmed', confirmed_at = now(), provider_ref = $2 WHERE id = $1",
+      [payment.id, providerRef]
+    );
+
+    await client.query("INSERT INTO transactions (payment_id, type, amount) VALUES ($1, 'charge', $2)", [
+      payment.id,
+      payment.amount,
+    ]);
+
+    const fees = await getFees(payment.university_id, client);
+    const rate = commissions.rateFor(payment.transaction_type, fees.commissionRate);
+    const base = finalizer.commissionBase
+      ? await finalizer.commissionBase(payment.transaction_id, client, payment)
+      : Number(payment.amount);
+    const commission = commissions.round2(base * rate);
+    if (commission > 0) {
+      await client.query("INSERT INTO transactions (payment_id, type, amount) VALUES ($1, 'commission', $2)", [
+        payment.id,
+        commission,
+      ]);
+    }
+
+    await commissions.record(client, { payment, finalizer, base, rate, commission });
+    await finalizer.onConfirmed(payment.transaction_id, client);
+
+    return { status: "success", message: "Payment confirmed successfully", paymentId: payment.id };
+  });
+
+  if (result.error) {
+    throw badRequest(result.error.message, result.error.code);
+  }
+
+  return result;
+}
+
 module.exports = {
-  registerFinalizer, initiatePayment, handleProviderCallback, refundPayment, notify, COMMISSION_RATE,
+  registerFinalizer, initiatePayment, handleProviderCallback, refundPayment, processChapaWebhook, notify, COMMISSION_RATE,
   _selectProvider: selectProvider, expireStaleManualPayments, MANUAL_WINDOW_HOURS, MANUAL_MAX_ATTEMPTS, // exported for the smoke test to confirm failover behavior
 };

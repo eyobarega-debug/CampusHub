@@ -24,7 +24,14 @@ app.use(cors({
     callback(null, !origin || allowedOrigins.includes(origin));
   },
 }));
-app.use(express.json({ limit: "2mb" }));
+app.use(
+  express.json({
+    limit: "2mb",
+    verify: (req, res, buf) => {
+      req.rawBody = buf;
+    },
+  })
+);
 app.use(morgan(process.env.NODE_ENV === "test" ? "tiny" : "dev"));
 app.use("/uploads", express.static(require("path").join(__dirname, "..", "uploads")));
 
@@ -46,6 +53,8 @@ app.use("/api/events", tenant,requireFeature("events"), require("./modules/ticke
 app.use("/api/reviews", tenant, require("./modules/reviews/routes"));
 app.use("/api/reports", tenant, require("./modules/reports/routes"));
 app.use("/api/notifications", tenant, require("./modules/notifications/routes"));
+// External payment gateway webhooks (server-to-server POST, unauthenticated by JWT, tenant resolved per payment)
+app.use("/api/payments/webhook", require("./modules/payments/webhook.routes"));
 // Manual payment-with-proof routes must come first: the generic payments router below has GET /:id.
 app.use("/api/payments", tenant, require("./modules/payments/manual.routes"));
 app.use("/api/payout-accounts", tenant, require("./modules/payments/payout.routes"));
