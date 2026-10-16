@@ -1171,7 +1171,7 @@ describe("Task 3: Enforce Email OTP Verification at Login", () => {
 
     assert.equal(loginRes.status, 200);
     assert.ok(loginRes.data.accessToken);
-    assert.ok(loginRes.data.refreshToken);
+    assert.ok(loginRes.headers.get("set-cookie")?.includes("ch_refresh") || loginRes.data.refreshToken);
     assert.equal(loginRes.data.user.email_verified, true);
   });
 });

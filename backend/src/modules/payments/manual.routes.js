@@ -22,23 +22,20 @@ const { notify, audit } = require("../../utils/notify");
 const paymentsService = require("../../services/payments");
 const { RATES } = require("../../services/commissions");
 
+const {
+  createTempUpload,
+  processUpload,
+  removeTempFile,
+  sendFileSafely,
+  UPLOAD_PROFILES,
+} = require("../../services/fileUpload");
+
 const router = express.Router();
 
-const PROOF_DIR = path.join(__dirname, "..", "..", "..", "private_uploads", "proofs");
+const PROOF_DIR = UPLOAD_PROFILES.paymentProof.destDir;
 fs.mkdirSync(PROOF_DIR, { recursive: true });
 
-const ALLOWED_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
-const upload = multer({
-  storage: multer.diskStorage({
-    destination: PROOF_DIR,
-    filename: (req, file, cb) => cb(null, `${crypto.randomBytes(16).toString("hex")}${path.extname(file.originalname).toLowerCase()}`),
-  }),
-  limits: { fileSize: 5 * 1024 * 1024 },
-  fileFilter: (req, file, cb) => {
-    if (!ALLOWED_TYPES.has(file.mimetype)) return cb(badRequest("Upload a JPEG, PNG or WEBP screenshot"));
-    cb(null, true);
-  },
-});
+const upload = createTempUpload({ maxBytes: UPLOAD_PROFILES.paymentProof.maxBytes });
 
 function removeFile(name) {
   if (name) fs.unlink(path.join(PROOF_DIR, name), () => {});
@@ -195,10 +192,7 @@ router.get(
       [payment.id]
     );
     if (!rows[0]) throw notFound("No proof has been uploaded for this payment");
-    const file = path.join(PROOF_DIR, path.basename(rows[0].file_name));
-    if (!fs.existsSync(file)) throw notFound("Proof image is no longer available");
-    res.set("Cache-Control", "private, no-store");
-    res.sendFile(file);
+    if (!sendFileSafely(res, PROOF_DIR, rows[0].file_name)) throw notFound("Proof image is no longer available");
   })
 );
 
@@ -211,14 +205,26 @@ router.post(
   requireAuth(),
   upload.single("screenshot"),
   asyncHandler(async (req, res) => {
-    const fileName = req.file?.filename;
+    let proofResult = null;
     try {
       if (!req.file) throw badRequest("Attach a screenshot of your payment (field 'screenshot')");
       const parsed = proofBody.safeParse(req.body);
       if (!parsed.success) throw badRequest(parsed.error.issues.map((i) => i.message).join("; "), "VALIDATION_ERROR");
       const { referenceNumber } = parsed.data;
 
-      const sha = crypto.createHash("sha256").update(fs.readFileSync(req.file.path)).digest("hex");
+      try {
+        proofResult = await processUpload({
+          tempPath: req.file.path,
+          destDir: PROOF_DIR,
+          allowedTypes: UPLOAD_PROFILES.paymentProof.allowedTypes,
+          maxBytes: UPLOAD_PROFILES.paymentProof.maxBytes,
+        });
+      } catch (uploadErr) {
+        if (uploadErr.uploadError) throw badRequest(uploadErr.message);
+        throw uploadErr;
+      }
+
+      const sha = crypto.createHash("sha256").update(fs.readFileSync(path.join(PROOF_DIR, proofResult.filename))).digest("hex");
 
       const payment = await db.withTransaction(async (client) => {
         const { rows } = await client.query("SELECT * FROM payments WHERE id = $1 AND provider = 'manual' FOR UPDATE", [req.params.id]);
@@ -236,7 +242,7 @@ router.post(
         await client.query(
           `INSERT INTO payment_proofs (university_id, payment_id, payer_id, payee_id, file_name, image_sha256, reference_number)
            VALUES ($1,$2,$3,$4,$5,$6,$7)`,
-          [p.university_id, p.id, p.payer_id, p.payee_id, req.file.filename, sha, referenceNumber]
+          [p.university_id, p.id, p.payer_id, p.payee_id, proofResult.filename, sha, referenceNumber]
         );
         const upd = await client.query(
           "UPDATE payments SET status = 'under_review', proof_attempts = proof_attempts + 1 WHERE id = $1 RETURNING *",
@@ -256,7 +262,7 @@ router.post(
       );
       res.status(201).json({ payment: publicPayment(payment) });
     } catch (err) {
-      removeFile(fileName);
+      if (proofResult?.filename) removeFile(proofResult.filename);
       if (err && err.code === "23505") {
         const reusedImage = String(err.constraint || "").includes("hash");
         return res.status(409).json({
@@ -269,6 +275,8 @@ router.post(
         });
       }
       throw err;
+    } finally {
+      await removeTempFile(req.file?.path);
     }
   })
 );

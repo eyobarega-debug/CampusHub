@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useState, useCallback } from "react";
-import { client, getTokens, setTokens, errMsg } from "../api/client";
+import { client, getAccessToken, setAccessToken, refreshSession, errMsg } from "../api/client";
 
 const AuthContext = createContext(null);
 
@@ -8,17 +8,16 @@ export function AuthProvider({ children }) {
   const [loading, setLoading] = useState(true);
 
   const loadMe = useCallback(async () => {
-    const tokens = getTokens();
-    if (!tokens?.accessToken) {
-      setUser(null);
-      setLoading(false);
-      return;
-    }
     try {
+      // If we don't have an in-memory access token yet (e.g. initial load or reload),
+      // restore the session using the HttpOnly refresh cookie.
+      if (!getAccessToken()) {
+        await refreshSession();
+      }
       const { data } = await client.get("/users/me");
       setUser(data.user);
     } catch {
-      setTokens(null);
+      setAccessToken(null);
       setUser(null);
     } finally {
       setLoading(false);
@@ -27,14 +26,17 @@ export function AuthProvider({ children }) {
 
   useEffect(() => {
     loadMe();
-    const onLogout = () => setUser(null);
+    const onLogout = () => {
+      setAccessToken(null);
+      setUser(null);
+    };
     window.addEventListener("ch:logout", onLogout);
     return () => window.removeEventListener("ch:logout", onLogout);
   }, [loadMe]);
 
   async function login(email, password) {
     const { data } = await client.post("/auth/login", { email, password });
-    setTokens({ accessToken: data.accessToken, refreshToken: data.refreshToken });
+    setAccessToken(data.accessToken, data.csrfToken);
     setUser(data.user);
     return data.user;
   }
@@ -45,13 +47,12 @@ export function AuthProvider({ children }) {
   }
 
   async function logout() {
-    const tokens = getTokens();
     try {
-      if (tokens?.refreshToken) await client.post("/auth/logout", { refreshToken: tokens.refreshToken });
+      await client.post("/auth/logout", {});
     } catch {
       /* best-effort */
     }
-    setTokens(null);
+    setAccessToken(null);
     setUser(null);
   }
 

@@ -1,35 +1,13 @@
 const express = require("express");
 const multer = require("multer");
-const path = require("path");
-const crypto = require("crypto");
 const { requireAuth } = require("../../middleware/auth");
 const { asyncHandler, badRequest } = require("../../utils/errors");
+const { createTempUpload, processUpload, removeTempFile, UPLOAD_PROFILES } = require("../../services/fileUpload");
 
 const router = express.Router();
 
-const ALLOWED_TYPES = new Set(["image/jpeg", "image/png", "image/webp", "image/gif"]);
-const MAX_BYTES = 5 * 1024 * 1024; // 5MB
-
-const storage = multer.diskStorage({
-  destination: path.join(__dirname, "..", "..", "..", "uploads"),
-  filename: (req, file, cb) => {
-    const ext = path.extname(file.originalname).toLowerCase();
-    cb(null, `${crypto.randomBytes(16).toString("hex")}${ext}`);
-  },
-});
-
-const upload = multer({
-  storage,
-  limits: { fileSize: MAX_BYTES },
-  fileFilter: (req, file, cb) => {
-    // SRS Section 15 "Secure File / Image Uploads": validate type before
-    // accepting, and store outside the app's own served-code directory
-    // (uploads/ is only reachable via the explicit static route in app.js,
-    // not part of the source tree Express would otherwise serve).
-    if (!ALLOWED_TYPES.has(file.mimetype)) return cb(badRequest("Only JPEG, PNG, WEBP, or GIF images are allowed"));
-    cb(null, true);
-  },
-});
+const profile = UPLOAD_PROFILES.publicImage;
+const upload = createTempUpload({ maxBytes: profile.maxBytes });
 
 router.post(
   "/",
@@ -37,7 +15,20 @@ router.post(
   upload.single("file"),
   asyncHandler(async (req, res) => {
     if (!req.file) throw badRequest("No file uploaded (expected multipart field 'file')");
-    res.status(201).json({ url: `/uploads/${req.file.filename}` });
+    try {
+      const result = await processUpload({
+        tempPath: req.file.path,
+        destDir: profile.destDir,
+        allowedTypes: profile.allowedTypes,
+        maxBytes: profile.maxBytes,
+      });
+      res.status(201).json({ url: `/uploads/${result.filename}` });
+    } catch (err) {
+      if (err.uploadError) throw badRequest(err.message);
+      throw err;
+    } finally {
+      await removeTempFile(req.file.path);
+    }
   })
 );
 
