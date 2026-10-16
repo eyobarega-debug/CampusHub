@@ -11,6 +11,7 @@ import ForgotPassword from "./pages/ForgotPassword";
 import ResetPassword from "./pages/ResetPassword";
 import Marketplace from "./pages/Marketplace";
 import ProductDetail from "./pages/ProductDetail";
+import SellerProfile from "./pages/SellerProfile";
 import Orders from "./pages/Orders";
 import Favorites from "./pages/Favorites";
 import Listings from "./pages/Listings";
@@ -64,6 +65,7 @@ export default function App() {
 
             <Route path="/marketplace" element={<Marketplace />} />
             <Route path="/marketplace/:id" element={<ProductDetail />} />
+            <Route path="/seller/:id" element={<SellerProfile />} />
             <Route path="/orders" element={<ProtectedRoute role={["student", ...ADMIN_ROLES]}><Orders /></ProtectedRoute>} />
             <Route path="/favorites" element={<ProtectedRoute><Favorites /></ProtectedRoute>} />
 

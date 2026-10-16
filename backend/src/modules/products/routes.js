@@ -47,14 +47,14 @@ router.get(
     params.push(limit, offset);
 
     const { rows } = await db.query(
-      `SELECT p.*, s.name AS store_name,
+      `SELECT p.*, s.name AS store_name, s.id AS store_id,
               (p.featured_until IS NOT NULL AND p.featured_until > now()) AS is_featured,
               COALESCE(AVG(r.rating),0)::float AS avg_rating, COUNT(r.id) AS review_count
        FROM products p
        JOIN stores s ON s.id = p.store_id
        LEFT JOIN reviews r ON r.target_type = 'product' AND r.target_id = p.id
        WHERE ${conditions.join(" AND ")}
-       GROUP BY p.id, s.name
+       GROUP BY p.id, s.name, s.id
        ORDER BY is_featured DESC, p.created_at DESC
        LIMIT $${params.length - 1} OFFSET $${params.length}`,
       params
@@ -69,7 +69,11 @@ router.get(
   asyncHandler(async (req, res) => {
     const { rows } = await db.query(
       `SELECT p.*, s.name AS store_name, s.id AS store_id, s.university_id,
-              COALESCE(AVG(r.rating),0)::float AS avg_rating, COUNT(r.id) AS review_count
+              COALESCE(AVG(r.rating),0)::float AS avg_rating, COUNT(r.id) AS review_count,
+              (SELECT COALESCE(AVG(r2.rating),0)::float FROM reviews r2
+                WHERE r2.target_type = 'store' AND r2.target_id = s.id) AS store_avg_rating,
+              (SELECT COUNT(*)::int FROM reviews r2
+                WHERE r2.target_type = 'store' AND r2.target_id = s.id) AS store_review_count
        FROM products p JOIN stores s ON s.id = p.store_id
        LEFT JOIN reviews r ON r.target_type = 'product' AND r.target_id = p.id
        WHERE p.id = $1 AND p.status <> 'removed'

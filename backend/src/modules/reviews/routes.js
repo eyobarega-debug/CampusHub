@@ -72,22 +72,55 @@ router.post(
   })
 );
 
-// FR-049 — list + aggregate rating for a target
+// FR-049 — list + aggregate rating for a target.
+// Backwards compatible: when neither `page` nor `pageSize` is supplied the
+// original behaviour (up to 50 newest reviews, offset 0) is preserved. The
+// added `breakdown` / `total` / `hasMore` fields are additive.
 router.get(
   "/",
-  validate({ query: z.object({ targetType: z.enum(TARGET_TYPES), targetId: z.string().uuid(), page: z.string().optional() }) }),
+  validate({
+    query: z.object({
+      targetType: z.enum(TARGET_TYPES),
+      targetId: z.string().uuid(),
+      page: z.string().optional(),
+      pageSize: z.string().optional(),
+    }),
+  }),
   asyncHandler(async (req, res) => {
     const { targetType, targetId } = req.query;
+    const paginating = req.query.page !== undefined || req.query.pageSize !== undefined;
+    const page = Math.max(1, Number(req.query.page) || 1);
+    const pageSize = Math.min(50, Math.max(1, Number(req.query.pageSize) || (paginating ? 10 : 50)));
+    const offset = (page - 1) * pageSize;
+
     const { rows } = await db.query(
       `SELECT r.*, u.name AS author_name FROM reviews r JOIN users u ON u.id = r.author_id
-       WHERE r.target_type = $1 AND r.target_id = $2 ORDER BY r.created_at DESC LIMIT 50`,
-      [targetType, targetId]
+       WHERE r.target_type = $1 AND r.target_id = $2 ORDER BY r.created_at DESC LIMIT $3 OFFSET $4`,
+      [targetType, targetId, pageSize, offset]
     );
     const agg = await db.query(
-      "SELECT COALESCE(AVG(rating),0)::float AS avg_rating, COUNT(*) AS count FROM reviews WHERE target_type=$1 AND target_id=$2",
+      "SELECT COALESCE(AVG(rating),0)::float AS avg_rating, COUNT(*)::int AS count FROM reviews WHERE target_type=$1 AND target_id=$2",
       [targetType, targetId]
     );
-    res.json({ reviews: rows, avgRating: agg.rows[0].avg_rating, count: Number(agg.rows[0].count) });
+    const ratingRows = await db.query(
+      "SELECT rating, COUNT(*)::int AS count FROM reviews WHERE target_type=$1 AND target_id=$2 GROUP BY rating",
+      [targetType, targetId]
+    );
+    const counts = {};
+    for (const row of ratingRows.rows) counts[row.rating] = Number(row.count);
+    const breakdown = [5, 4, 3, 2, 1].map((rating) => ({ rating, count: counts[rating] || 0 }));
+    const total = Number(agg.rows[0].count);
+
+    res.json({
+      reviews: rows,
+      avgRating: agg.rows[0].avg_rating,
+      count: total,
+      total,
+      breakdown,
+      page,
+      pageSize,
+      hasMore: offset + rows.length < total,
+    });
   })
 );
 

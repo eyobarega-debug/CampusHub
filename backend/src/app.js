@@ -34,6 +34,7 @@ app.use("/api/auth", require("./modules/auth/routes"));
 app.use("/api/users", require("./modules/auth/users.routes"));
 app.use("/api/merchants", tenant, require("./modules/merchants/routes"));
 app.use("/api/products", tenant, require("./modules/products/routes"));
+app.use("/api/sellers", tenant, require("./modules/sellers/routes"));
 app.use("/api/orders", tenant, require("./modules/orders/routes"));
 app.use("/api/listings", tenant,requireFeature("p2p"), require("./modules/listings/routes"));
 app.use("/api/rentals", tenant,requireFeature("rentals"), require("./modules/rentals/routes"));

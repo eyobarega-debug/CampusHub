@@ -1,9 +1,12 @@
 import { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { client } from "../api/client";
 import { Badge, Card, EmptyState, Input, Select, Spinner } from "../components/ui";
 
 export default function Marketplace() {
+  const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const storeId = searchParams.get("store") || "";
   const [products, setProducts] = useState(null);
   const [categories, setCategories] = useState([]);
   const [q, setQ] = useState("");
@@ -16,11 +19,11 @@ export default function Marketplace() {
   useEffect(() => {
     const t = setTimeout(() => {
       client
-        .get("/products", { params: { q: q || undefined, category: category || undefined } })
+        .get("/products", { params: { q: q || undefined, category: category || undefined, storeId: storeId || undefined } })
         .then(({ data }) => setProducts(data.products));
     }, 250);
     return () => clearTimeout(t);
-  }, [q, category]);
+  }, [q, category, storeId]);
 
   return (
     <div>
@@ -40,6 +43,13 @@ export default function Marketplace() {
         </div>
       </div>
 
+      {storeId && (
+        <div className="mb-4 flex items-center justify-between rounded-lg bg-navy/5 px-4 py-2 text-sm text-navy">
+          <span>Showing products from a single seller.</span>
+          <Link to="/marketplace" className="underline">Clear filter</Link>
+        </div>
+      )}
+
       {!products ? (
         <div className="flex justify-center py-16"><Spinner /></div>
       ) : products.length === 0 ? (
@@ -58,7 +68,16 @@ export default function Marketplace() {
                   )}
                 </div>
                 <p className="font-medium text-navy line-clamp-1">{p.title}</p>
-                <p className="text-xs text-slate">{p.store_name}</p>
+                <p className="text-xs text-slate">
+                  <span
+                    role="link"
+                    tabIndex={0}
+                    className="hover:text-navy hover:underline"
+                    onClick={(e) => { e.preventDefault(); e.stopPropagation(); navigate(`/seller/${p.store_id}`); }}
+                  >
+                    {p.store_name}
+                  </span>
+                </p>
                 <div className="mt-2 flex items-center justify-between">
                   <span className="font-semibold text-accent-dark">{Number(p.price).toFixed(2)} birr</span>
                   {p.status === "out_of_stock" ? (

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { client } from "../api/client";
 import { errMsg } from "../context/AuthContext";
 import ImageUploader from "../components/ImageUploader";
@@ -260,6 +260,9 @@ function StoreTab({ store, onSaved }) {
 
   return (
     <Card className="max-w-lg p-5">
+      <div className="mb-3 flex justify-end">
+        <Link to={`/seller/${store.id}`} className="text-sm text-navy underline">View public profile →</Link>
+      </div>
       <form onSubmit={submit} className="space-y-4">
         <ErrorBanner message={error} />
         <SuccessBanner message={success} />

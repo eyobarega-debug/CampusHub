@@ -131,12 +131,41 @@ router.patch(
   "/stores/mine",
   requireAuth(),
   requireRole("merchant"),
-  validate({ body: z.object({ name: z.string().optional(), description: z.string().optional(), logoUrl: z.string().optional() }) }),
+  validate({
+    body: z.object({
+      name: z.string().min(2).optional(),
+      description: z.string().optional(),
+      logoUrl: z.string().optional(),
+      coverImageUrl: z.string().optional(),
+      category: z.string().optional(),
+      publicEmail: z.union([z.string().email(), z.literal("")]).optional(),
+      publicPhone: z.string().optional(),
+    }),
+  }),
   asyncHandler(async (req, res) => {
+    // Nullable text fields use CASE so that: omitted (undefined -> NULL) keeps
+    // the current value, while an explicit empty string clears the field. This
+    // is what lets "remove cover image" work without a separate endpoint.
     const { rows } = await db.query(
-      `UPDATE stores SET name = COALESCE($1,name), description = COALESCE($2,description), logo_url = COALESCE($3,logo_url)
-       WHERE merchant_id = $4 RETURNING *`,
-      [req.body.name, req.body.description, req.body.logoUrl, req.user.id]
+      `UPDATE stores SET
+         name            = COALESCE($1, name),
+         description     = CASE WHEN $2::text IS NULL THEN description     ELSE NULLIF($2,'') END,
+         logo_url        = CASE WHEN $3::text IS NULL THEN logo_url        ELSE NULLIF($3,'') END,
+         cover_image_url = CASE WHEN $4::text IS NULL THEN cover_image_url ELSE NULLIF($4,'') END,
+         category        = CASE WHEN $5::text IS NULL THEN category        ELSE NULLIF($5,'') END,
+         public_email    = CASE WHEN $6::text IS NULL THEN public_email    ELSE NULLIF($6,'') END,
+         public_phone    = CASE WHEN $7::text IS NULL THEN public_phone    ELSE NULLIF($7,'') END
+       WHERE merchant_id = $8 RETURNING *`,
+      [
+        req.body.name,
+        req.body.description,
+        req.body.logoUrl,
+        req.body.coverImageUrl,
+        req.body.category,
+        req.body.publicEmail,
+        req.body.publicPhone,
+        req.user.id,
+      ]
     );
     if (!rows[0]) throw notFound("No store found for this merchant yet");
     res.json({ store: rows[0] });

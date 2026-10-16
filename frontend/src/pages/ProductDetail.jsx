@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams, Link } from "react-router-dom";
 import { client } from "../api/client";
 import { useAuth, errMsg } from "../context/AuthContext";
 import { Badge, Button, Card, ErrorBanner, PageHeader, Spinner } from "../components/ui";
@@ -51,7 +51,16 @@ export default function ProductDetail() {
 
   return (
     <div className="mx-auto max-w-4xl">
-      <PageHeader title={product.title} subtitle={`Sold by ${product.store_name}`} />
+      <PageHeader title={product.title} />
+      <div className="mb-4 -mt-4 flex flex-wrap items-center gap-2 text-sm text-slate">
+        <span>Sold by</span>
+        <Link to={`/seller/${product.store_id}`} className="font-medium text-navy underline">{product.store_name}</Link>
+        {Number(product.store_review_count) > 0 && (
+          <span>· ⭐ {Number(product.store_avg_rating).toFixed(1)} ({product.store_review_count} reviews)</span>
+        )}
+        <span>·</span>
+        <Link to={`/seller/${product.store_id}`} className="text-navy underline">View seller profile →</Link>
+      </div>
       <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
         <Card className="flex h-72 items-center justify-center text-6xl">
           {product.images?.[0] ? (
