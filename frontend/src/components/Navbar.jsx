@@ -61,8 +61,19 @@ export default function Navbar() {
                   </span>
                 )}
               </NavLink>
-              <NavLink to="/profile" className="text-sm text-white/90 hover:text-white">
-                {user.name?.split(" ")[0]}
+              <NavLink to="/profile" className="flex items-center gap-2 text-sm text-white/90 hover:text-white" title="My Profile">
+                {user.avatar_url ? (
+                  <img
+                    src={user.avatar_url}
+                    alt=""
+                    className="h-7 w-7 rounded-full object-cover border border-white/40"
+                  />
+                ) : (
+                  <div className="flex h-7 w-7 items-center justify-center rounded-full bg-accent text-xs font-bold text-white">
+                    {user.name?.[0]?.toUpperCase() || "U"}
+                  </div>
+                )}
+                <span>{user.name?.split(" ")[0]}</span>
               </NavLink>
               <Button
                 variant="outline"
