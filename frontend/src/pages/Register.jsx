@@ -23,8 +23,22 @@ export default function Register() {
     setLoading(true);
     try {
       const { data } = await client.post("/auth/register", { ...form, universityId: form.universityId || undefined });
-      setSuccess(data.message + " You can log in now.");
-      setTimeout(() => navigate("/login"), 1800);
+      // Next step is email OTP verification. Stash the email so a refresh
+      // doesn't strand the student, then hand off to the verification page.
+      sessionStorage.setItem("ch_pending_verify_email", form.email);
+      setSuccess(data.message);
+      setTimeout(
+        () =>
+          navigate("/verify-email", {
+            state: {
+              email: form.email,
+              expiresInSeconds: data.expiresInSeconds,
+              resendCooldownSeconds: data.resendCooldownSeconds,
+              devOtp: data.devOtp,
+            },
+          }),
+        1400
+      );
     } catch (err) {
       setError(errMsg(err, "Could not register"));
     } finally {

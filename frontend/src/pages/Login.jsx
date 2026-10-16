@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useAuth, errMsg } from "../context/AuthContext";
-import { Button, Card, ErrorBanner, Input, PageHeader } from "../components/ui";
+import { Button, Card, ErrorBanner, Input, PageHeader, SuccessBanner } from "../components/ui";
 
 export default function Login() {
   const { login } = useAuth();
@@ -10,6 +10,7 @@ export default function Login() {
   const [form, setForm] = useState({ email: "", password: "" });
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [flash] = useState(location.state?.flash || "");
 
   async function onSubmit(e) {
     e.preventDefault();
@@ -32,6 +33,7 @@ export default function Login() {
       <Card className="p-6">
         <form onSubmit={onSubmit} className="space-y-4">
           <ErrorBanner message={error} />
+          <SuccessBanner message={flash} />
           <Input label="Email" type="email" required value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} />
           <Input
             label="Password"

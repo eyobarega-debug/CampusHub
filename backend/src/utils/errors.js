@@ -11,6 +11,7 @@ const unauthorized = (msg = "Authentication required") => new ApiError(401, msg,
 const forbidden = (msg = "You are not allowed to do this") => new ApiError(403, msg, "FORBIDDEN");
 const notFound = (msg = "Not found") => new ApiError(404, msg, "NOT_FOUND");
 const conflict = (msg, code) => new ApiError(409, msg, code || "CONFLICT");
+const tooMany = (msg, code) => new ApiError(429, msg, code || "TOO_MANY_REQUESTS");
 
 // Wrap async route handlers so thrown/rejected errors reach the error middleware
 // instead of crashing the process or hanging the request.
@@ -29,4 +30,4 @@ function errorHandler(err, req, res, next) {
   return res.status(500).json({ error: { code: "INTERNAL", message: "Something went wrong." } });
 }
 
-module.exports = { ApiError, badRequest, unauthorized, forbidden, notFound, conflict, asyncHandler, errorHandler };
+module.exports = { ApiError, badRequest, unauthorized, forbidden, notFound, conflict, tooMany, asyncHandler, errorHandler };

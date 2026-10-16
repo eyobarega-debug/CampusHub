@@ -26,8 +26,8 @@ async function main() {
 
   const user = async (name, email, role, verified = true) => {
     const { rows } = await pool.query(
-      `INSERT INTO users (university_id, name, email, phone, password_hash, role, verified, verification_method)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,'domain') RETURNING *`,
+      `INSERT INTO users (university_id, name, email, phone, password_hash, role, verified, verification_method, email_verified)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,'domain',true) RETURNING *`,
       [uni.id, name, email, "+251900000000", pw, role, verified]
     );
     return rows[0];
@@ -36,8 +36,8 @@ async function main() {
   const admin = await user("Admin Bekele", "admin@aastu.edu.et", "admin");
   // Phase 3: the Super Administrator is the only account that may have no university.
   await pool.query(
-    `INSERT INTO users (university_id, name, email, phone, password_hash, role, verified, verification_method)
-     VALUES (NULL,'Super Admin','super@campushub.et','+251900000001',$1,'super_admin',true,'seed')`,
+    `INSERT INTO users (university_id, name, email, phone, password_hash, role, verified, verification_method, email_verified)
+     VALUES (NULL,'Super Admin','super@campushub.et','+251900000001',$1,'super_admin',true,'seed',true)`,
     [pw]
   );
   const student1 = await user("Sara Tesfaye", "sara@aastu.edu.et", "student");

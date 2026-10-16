@@ -9,6 +9,12 @@ const { validate } = require("../../middleware/validate");
 const { rateLimit } = require("../../middleware/rateLimit");
 const { asyncHandler, badRequest, unauthorized, forbidden, conflict } = require("../../utils/errors");
 const { audit } = require("../../utils/notify");
+const {
+  issueSignupOtp,
+  verifySignupOtp,
+  OTP_TTL_MINUTES,
+  OTP_RESEND_COOLDOWN_SECONDS,
+} = require("../../services/otp");
 
 const router = express.Router();
 
@@ -52,19 +58,37 @@ router.post(
 
     const passwordHash = await hashPassword(password);
     const { rows } = await db.query(
-      `INSERT INTO users (university_id, name, email, phone, password_hash, role, verified, verification_method)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
-       RETURNING id, name, email, role, verified, university_id, created_at`,
+      `INSERT INTO users (university_id, name, email, phone, password_hash, role, verified, verification_method, email_verified)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,false)
+       RETURNING id, name, email, role, verified, email_verified, university_id, created_at`,
       [uniId, name, email.toLowerCase(), phone || null, passwordHash, role, verified, verificationMethod]
     );
     const user = rows[0];
     await audit(user.id, "user.register", "user", user.id, { role });
 
+    // Email-ownership proof: a fresh account is NOT email-verified until the
+    // student enters the 6-digit code we send to the address they signed up
+    // with. Campus verification (above) is a separate axis and is unchanged.
+    const { expiresAt, devCode, delivered } = await issueSignupOtp({
+      userId: user.id,
+      email: user.email,
+      name: user.name,
+      isFirstSend: true,
+    });
+
     res.status(201).json({
       user,
-      message: verified
-        ? "Account created and automatically verified via university email."
-        : "Account created. Verification is pending admin review (or upload a student ID via support in a future iteration).",
+      emailVerificationRequired: true,
+      resendCooldownSeconds: OTP_RESEND_COOLDOWN_SECONDS,
+      expiresInSeconds: Math.max(0, Math.round((expiresAt.getTime() - Date.now()) / 1000)),
+      // Dev-only convenience, mirroring the forgot-password route. Never
+      // returned in production. See src/services/otp.js.
+      devOtp: process.env.NODE_ENV === "production" ? undefined : devCode,
+      emailDelivered: delivered,
+      message:
+        `Account created. We sent a ${OTP_TTL_MINUTES}-minute verification code to ${user.email} — ` +
+        "enter it to verify your email address." +
+        (verified ? " (Your university email already qualifies for campus verification.)" : ""),
     });
   })
 );
@@ -96,6 +120,63 @@ router.post(
 
     const { password_hash, ...safeUser } = user;
     res.json({ accessToken, refreshToken, user: safeUser });
+  })
+);
+
+// ---------------------------------------------------------------------------
+// Email OTP verification (signup). Public routes — the student has no token
+// yet, so these are NOT behind requireAuth().
+// ---------------------------------------------------------------------------
+const verifyEmailSchema = z.object({
+  email: z.string().email(),
+  otp: z.string().regex(/^\d{6}$/, "Enter the 6-digit code"),
+});
+
+// Check the 6-digit code. Wrong email and wrong code return the SAME message
+// (OTP_INVALID) so we don't reveal which addresses have accounts.
+router.post(
+  "/verify-email",
+  rateLimit({ windowMs: 60_000, max: 10, keyFn: (req) => `verifyemail:${req.ip}:${req.body?.email}` }),
+  validate({ body: verifyEmailSchema }),
+  asyncHandler(async (req, res) => {
+    const { userId } = await verifySignupOtp({ email: req.body.email, code: req.body.otp });
+    await audit(userId, "user.email_verified", "user", userId, {});
+    res.json({ success: true, message: "Email verified — your account is ready. You can now log in." });
+  })
+);
+
+// Ask for a new code. Enforces a resend cooldown and an hourly send budget in
+// the OTP service, plus a per-IP rate limit here.
+router.post(
+  "/verify-email/resend",
+  rateLimit({ windowMs: 60_000, max: 6, keyFn: (req) => `resendotp:${req.ip}:${req.body?.email}` }),
+  validate({ body: z.object({ email: z.string().email() }) }),
+  asyncHandler(async (req, res) => {
+    const email = req.body.email.toLowerCase();
+    const { rows } = await db.query("SELECT id, name, email, email_verified FROM users WHERE email = $1", [email]);
+    const user = rows[0];
+
+    // Same generic response whether the email is unknown or already verified.
+    if (!user || user.email_verified) {
+      return res.json({ message: "If that email still needs verification, a new code is on its way." });
+    }
+
+    const { expiresAt, devCode, delivered } = await issueSignupOtp({
+      userId: user.id,
+      email: user.email,
+      name: user.name,
+      isFirstSend: false,
+    });
+
+    res.json({
+      message: delivered
+        ? "A new code has been sent."
+        : "We couldn't send the code right now — please try again in a moment.",
+      resendCooldownSeconds: OTP_RESEND_COOLDOWN_SECONDS,
+      expiresInSeconds: Math.max(0, Math.round((expiresAt.getTime() - Date.now()) / 1000)),
+      devOtp: process.env.NODE_ENV === "production" ? undefined : devCode,
+      emailDelivered: delivered,
+    });
   })
 );
 
