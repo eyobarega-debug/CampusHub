@@ -1,102 +1,266 @@
+import { useEffect, useState, useCallback } from "react";
 import { Link } from "react-router-dom";
-import { useState } from "react";
+import { useAuth } from "../context/AuthContext";
 import { client } from "../api/client";
-import { useAuth, errMsg } from "../context/AuthContext";
-import { Badge, Button, Card, ErrorBanner, Input, PageHeader, SuccessBanner, TextArea } from "../components/ui";
-
-const PREF_LABELS = {
-  orders: "Order updates",
-  rentals: "Rental reminders & due dates",
-  events: "Event & ticket updates",
-  announcements: "University announcements",
-};
-const DEFAULT_PREFS = { orders: true, rentals: true, events: true, announcements: true };
+import { Button, Card, Spinner } from "../components/ui";
+import ProfileHeader from "../components/profile/ProfileHeader";
+import ProfileStats from "../components/profile/ProfileStats";
+import ProfileActivity from "../components/profile/ProfileActivity";
+import ProfileSettings from "../components/profile/ProfileSettings";
+import EditProfileModal from "../components/profile/EditProfileModal";
 
 export default function Profile() {
   const { user, reload } = useAuth();
-  const [form, setForm] = useState({ name: user?.name || "", phone: user?.phone || "", bio: user?.bio || "" });
-  const [prefs, setPrefs] = useState({ ...DEFAULT_PREFS, ...(user?.notification_prefs || {}) });
-  const [saving, setSaving] = useState(false);
-  const [success, setSuccess] = useState("");
-  const [error, setError] = useState("");
+  const [activeTab, setActiveTab] = useState("overview"); // 'overview' | 'activity' | 'settings'
+  const [stats, setStats] = useState(null);
+  const [activities, setActivities] = useState([]);
+  const [loadingData, setLoadingData] = useState(true);
+  const [isEditOpen, setIsEditOpen] = useState(false);
 
-  async function submit(e) {
-    e.preventDefault();
-    setSaving(true);
-    setError("");
-    setSuccess("");
+  const fetchProfileData = useCallback(async () => {
+    if (!user) return;
     try {
-      await client.patch("/users/me", { ...form, notificationPrefs: prefs });
-      await reload();
-      setSuccess("Profile updated.");
+      const [statsRes, activityRes] = await Promise.all([
+        client.get("/users/me/stats"),
+        client.get("/users/me/activity"),
+      ]);
+      setStats(statsRes.data?.stats || null);
+      setActivities(activityRes.data?.activities || []);
     } catch (err) {
-      setError(errMsg(err, "Could not update profile"));
+      console.error("Failed to fetch profile stats/activity:", err);
     } finally {
-      setSaving(false);
+      setLoadingData(false);
     }
+  }, [user]);
+
+  useEffect(() => {
+    fetchProfileData();
+  }, [fetchProfileData]);
+
+  async function handleProfileUpdated() {
+    await reload();
+    await fetchProfileData();
   }
 
-  if (!user) return null;
+  if (!user) {
+    return (
+      <div className="flex h-64 items-center justify-center">
+        <Spinner className="h-8 w-8" />
+      </div>
+    );
+  }
+
+  const role = user.role || "student";
 
   return (
-    <div className="mx-auto max-w-lg">
-      <PageHeader title="My Profile" />
-      <Card className="p-6">
-        <div className="mb-4 flex items-center gap-2">
-          <Badge tone="navy">{user.role}</Badge>
-          <Badge tone={user.verified ? "ok" : "warn"}>{user.verified ? "verified" : "unverified"}</Badge>
-        </div>
-        <form onSubmit={submit} className="space-y-4">
-          <ErrorBanner message={error} />
-          <SuccessBanner message={success} />
-          <Input label="Email" value={user.email} disabled className="bg-slate/5 text-slate" />
-          <Input label="Full name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
-          <Input label="Phone" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} />
-          <TextArea label="Bio" value={form.bio} onChange={(e) => setForm({ ...form, bio: e.target.value })} />
+    <div className="mx-auto max-w-5xl space-y-6">
+      {/* Profile Header */}
+      <ProfileHeader
+        user={user}
+        isOwner={true}
+        onEditClick={() => setIsEditOpen(true)}
+        onProfileUpdated={handleProfileUpdated}
+      />
 
-          <div>
-            <p className="mb-2 text-sm font-medium text-navy">Notification preferences (FR-046)</p>
-            <div className="space-y-2 rounded-lg border border-slate/15 p-3">
-              {Object.entries(PREF_LABELS).map(([key, label]) => (
-                <label key={key} className="flex items-center justify-between text-sm text-slate">
-                  {label}
-                  <input
-                    type="checkbox"
-                    checked={!!prefs[key]}
-                    onChange={(e) => setPrefs({ ...prefs, [key]: e.target.checked })}
-                    className="h-4 w-4 accent-navy"
-                  />
-                </label>
-              ))}
-            </div>
-            <p className="mt-1 text-xs text-slate">
-              Security and ticket-cancellation notices are always sent regardless of these settings.
-            </p>
-          </div>
+      {/* Tabs Navigation */}
+      <div className="flex border-b border-slate/20">
+        <button
+          type="button"
+          onClick={() => setActiveTab("overview")}
+          className={`flex items-center gap-2 border-b-2 px-5 py-3 text-sm font-semibold transition ${
+            activeTab === "overview"
+              ? "border-navy text-navy"
+              : "border-transparent text-slate hover:text-navy"
+          }`}
+        >
+          📊 Overview & Stats
+        </button>
 
-          <Button type="submit" disabled={saving}>{saving ? "Saving..." : "Save changes"}</Button>
-        </form>
-      </Card>
-
-      <Card className="mt-6 p-6">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <p className="font-medium text-navy">Campus verification</p>
-            <p className="mt-1 text-sm text-slate">
-              {user.verified
-                ? user.verification_method === "domain"
-                  ? "Your account was verified automatically through your university email."
-                  : "Your account has been verified by a university administrator."
-                : "Your university email couldn't verify you automatically. Submit official proof of campus membership."}
-            </p>
-          </div>
-          {user.verified ? (
-            <Badge tone="ok">campus verified</Badge>
-          ) : (
-            <Button as={Link} to="/verify" variant="accent">Verify Campus Account</Button>
+        <button
+          type="button"
+          onClick={() => setActiveTab("activity")}
+          className={`flex items-center gap-2 border-b-2 px-5 py-3 text-sm font-semibold transition ${
+            activeTab === "activity"
+              ? "border-navy text-navy"
+              : "border-transparent text-slate hover:text-navy"
+          }`}
+        >
+          ⏱️ Activity Feed
+          {activities.length > 0 && (
+            <span className="rounded-full bg-slate/10 px-2 py-0.5 text-xs text-slate">
+              {activities.length}
+            </span>
           )}
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setActiveTab("settings")}
+          className={`flex items-center gap-2 border-b-2 px-5 py-3 text-sm font-semibold transition ${
+            activeTab === "settings"
+              ? "border-navy text-navy"
+              : "border-transparent text-slate hover:text-navy"
+          }`}
+        >
+          ⚙️ Account Settings
+        </button>
+      </div>
+
+      {/* Tab Contents */}
+      {loadingData ? (
+        <div className="flex h-40 items-center justify-center">
+          <Spinner />
         </div>
-      </Card>
+      ) : (
+        <>
+          {activeTab === "overview" && (
+            <div className="space-y-6">
+              {/* Role-Specific Metrics */}
+              <div>
+                <h3 className="mb-3 text-base font-bold text-navy">Platform Statistics</h3>
+                <ProfileStats stats={stats} role={role} />
+              </div>
+
+              {/* Role-Specific Quick Shortcuts & Showcase */}
+              {role === "student" && (
+                <div className="grid gap-4 sm:grid-cols-3">
+                  <Card className="p-4">
+                    <p className="font-semibold text-navy">🛍️ Orders & Resale</p>
+                    <p className="mt-1 text-xs text-slate">
+                      Browse your active purchases and peer-to-peer listings on campus.
+                    </p>
+                    <div className="mt-3 flex gap-2">
+                      <Button as={Link} to="/orders" variant="outline" className="text-xs">
+                        My Orders
+                      </Button>
+                      <Button as={Link} to="/listings" variant="ghost" className="text-xs">
+                        P2P Market
+                      </Button>
+                    </div>
+                  </Card>
+
+                  <Card className="p-4">
+                    <p className="font-semibold text-navy">🔄 Rentals & Borrowing</p>
+                    <p className="mt-1 text-xs text-slate">
+                      Track your equipment, book rentals, and return due dates.
+                    </p>
+                    <div className="mt-3 flex gap-2">
+                      <Button as={Link} to="/rentals/mine" variant="outline" className="text-xs">
+                        My Bookings
+                      </Button>
+                      <Button as={Link} to="/rentals" variant="ghost" className="text-xs">
+                        Browse Items
+                      </Button>
+                    </div>
+                  </Card>
+
+                  <Card className="p-4">
+                    <p className="font-semibold text-navy">🎟️ Campus Events</p>
+                    <p className="mt-1 text-xs text-slate">
+                      View your registered event tickets, club workshops, and QR passes.
+                    </p>
+                    <div className="mt-3 flex gap-2">
+                      <Button as={Link} to="/tickets" variant="outline" className="text-xs">
+                        My Tickets
+                      </Button>
+                      <Button as={Link} to="/events" variant="ghost" className="text-xs">
+                        Find Events
+                      </Button>
+                    </div>
+                  </Card>
+                </div>
+              )}
+
+              {role === "merchant" && (
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <Card className="p-5">
+                    <h4 className="font-bold text-navy">🏪 Merchant Storefront</h4>
+                    <p className="mt-1 text-xs text-slate">
+                      Manage your campus store catalog, upload new products, and configure store policies.
+                    </p>
+                    <div className="mt-4 flex flex-wrap gap-2">
+                      <Button as={Link} to="/merchant" variant="primary">
+                        Merchant Dashboard
+                      </Button>
+                      <Button as={Link} to={`/seller/${user.id}`} variant="outline">
+                        View Storefront
+                      </Button>
+                    </div>
+                  </Card>
+
+                  <Card className="p-5">
+                    <h4 className="font-bold text-navy">💳 Payouts & Commissions</h4>
+                    <p className="mt-1 text-xs text-slate">
+                      Track your earnings, commission rates, and linked bank or mobile money payout accounts.
+                    </p>
+                    <div className="mt-4 flex flex-wrap gap-2">
+                      <Button as={Link} to="/commissions" variant="outline">
+                        My Commissions
+                      </Button>
+                      <Button as={Link} to="/payout-accounts" variant="outline">
+                        Payout Accounts
+                      </Button>
+                    </div>
+                  </Card>
+                </div>
+              )}
+
+              {role === "organizer" && (
+                <Card className="p-5">
+                  <h4 className="font-bold text-navy">📅 Event Organizer Center</h4>
+                  <p className="mt-1 text-xs text-slate">
+                    Create new student events, manage ticket capacities, and validate attendee entry via QR check-in.
+                  </p>
+                  <div className="mt-4 flex flex-wrap gap-3">
+                    <Button as={Link} to="/organizer" variant="primary">
+                      Manage Events
+                    </Button>
+                    <Button as={Link} to="/events" variant="outline">
+                      Campus Event Board
+                    </Button>
+                  </div>
+                </Card>
+              )}
+
+              {(role === "admin" || role === "super_admin") && (
+                <Card className="p-5">
+                  <h4 className="font-bold text-navy">🛡️ University Administration</h4>
+                  <p className="mt-1 text-xs text-slate">
+                    Review verification requests, manage student dispute cases, and monitor platform activity.
+                  </p>
+                  <div className="mt-4 flex flex-wrap gap-3">
+                    <Button as={Link} to="/admin" variant="primary">
+                      Admin Console
+                    </Button>
+                    <Button as={Link} to="/payment-approvals" variant="outline">
+                      Payment Approvals
+                    </Button>
+                    <Button as={Link} to="/admin/commissions" variant="outline">
+                      Commission Settings
+                    </Button>
+                  </div>
+                </Card>
+              )}
+            </div>
+          )}
+
+          {activeTab === "activity" && (
+            <ProfileActivity activities={activities} />
+          )}
+
+          {activeTab === "settings" && (
+            <ProfileSettings user={user} onProfileUpdated={handleProfileUpdated} />
+          )}
+        </>
+      )}
+
+      {/* Edit Profile Modal */}
+      <EditProfileModal
+        user={user}
+        isOpen={isEditOpen}
+        onClose={() => setIsEditOpen(false)}
+        onSaved={handleProfileUpdated}
+      />
     </div>
   );
 }

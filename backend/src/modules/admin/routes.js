@@ -263,6 +263,41 @@ router.get(
   })
 );
 
+router.get(
+  "/users/:id",
+  asyncHandler(async (req, res) => {
+    const { rows } = await db.query(
+      `SELECT u.id, u.name, u.email, u.phone, u.role, u.university_id, u.verified, u.verification_method,
+              u.avatar_url, u.cover_image_url, u.bio, u.department, u.year,
+              u.privacy_settings, u.notification_prefs, u.email_verified, u.suspended, u.created_at,
+              uni.name AS university_name
+       FROM users u
+       LEFT JOIN universities uni ON uni.id = u.university_id
+       WHERE u.id = $1 AND ($2::uuid IS NULL OR u.university_id = $2)`,
+      [req.params.id, req.tenant.universityId]
+    );
+    const user = rows[0];
+    if (!user) throw notFound("User not found");
+
+    const [reportsRes, verifRes, ordersCount, listingsCount] = await Promise.all([
+      db.query("SELECT * FROM reports WHERE target_type = 'user' AND target_id = $1 ORDER BY created_at DESC LIMIT 5", [user.id]),
+      db.query("SELECT * FROM verification_requests WHERE user_id = $1 ORDER BY created_at DESC LIMIT 1", [user.id]),
+      db.query("SELECT count(*)::int AS count FROM orders WHERE buyer_id = $1", [user.id]),
+      db.query("SELECT count(*)::int AS count FROM p2p_listings WHERE seller_id = $1", [user.id]),
+    ]);
+
+    res.json({
+      user,
+      recentReports: reportsRes.rows,
+      verificationRequest: verifRes.rows[0] || null,
+      activity: {
+        ordersCount: ordersCount.rows[0]?.count || 0,
+        listingsCount: listingsCount.rows[0]?.count || 0,
+      },
+    });
+  })
+);
+
 router.patch(
   "/users/:id",
   validate({
@@ -270,6 +305,9 @@ router.patch(
       role: z.enum(["student", "merchant", "organizer", "admin"]).optional(),
       verified: z.boolean().optional(),
       suspended: z.boolean().optional(),
+      clearAvatar: z.boolean().optional(),
+      clearCover: z.boolean().optional(),
+      clearBio: z.boolean().optional(),
     }),
   }),
   asyncHandler(async (req, res) => {
@@ -278,16 +316,53 @@ router.patch(
       // in this deployment needs a distinct approval step, not a routine PATCH.
       throw badRequest("Promoting a user to admin requires a Super Administrator (POST /api/super/admins/promote).");
     }
-    const { rows } = await db.query(
-      `UPDATE users SET
-         role = COALESCE($1, role), verified = COALESCE($2, verified), suspended = COALESCE($3, suspended)
-       WHERE id = $4 AND role NOT IN ('super_admin') AND ($5::uuid IS NULL OR university_id = $5)
-       RETURNING id, name, email, role, verified, suspended`,
-      [req.body.role, req.body.verified, req.body.suspended, req.params.id, req.tenant.universityId]
+
+    const { role, verified, suspended, clearAvatar, clearCover, clearBio } = req.body;
+    const existing = await db.query(
+      "SELECT * FROM users WHERE id = $1 AND role NOT IN ('super_admin') AND ($2::uuid IS NULL OR university_id = $2)",
+      [req.params.id, req.tenant.universityId]
     );
-    if (!rows[0]) throw notFound("User not found");
-    await audit(req.user.id, "user.update", "user", req.params.id, req.body);
-    res.json({ user: rows[0] });
+    if (!existing.rows[0]) throw notFound("User not found");
+
+    const updates = [];
+    const values = [];
+
+    if (role !== undefined) {
+      values.push(role);
+      updates.push(`role = $${values.length}`);
+    }
+    if (verified !== undefined) {
+      values.push(verified);
+      updates.push(`verified = $${values.length}`);
+    }
+    if (suspended !== undefined) {
+      values.push(suspended);
+      updates.push(`suspended = $${values.length}`);
+    }
+    if (clearAvatar) {
+      updates.push(`avatar_url = NULL`);
+    }
+    if (clearCover) {
+      updates.push(`cover_image_url = NULL`);
+    }
+    if (clearBio) {
+      updates.push(`bio = NULL`);
+    }
+
+    if (updates.length > 0) {
+      values.push(req.params.id);
+      values.push(req.tenant.universityId);
+      const { rows } = await db.query(
+        `UPDATE users SET ${updates.join(", ")}
+         WHERE id = $${values.length - 1} AND role NOT IN ('super_admin') AND ($${values.length}::uuid IS NULL OR university_id = $${values.length})
+         RETURNING id, name, email, role, verified, suspended, avatar_url, cover_image_url, bio`,
+        values
+      );
+      await audit(req.user.id, "user.update", "user", req.params.id, req.body);
+      return res.json({ user: rows[0] });
+    }
+
+    res.json({ user: existing.rows[0] });
   })
 );
 
