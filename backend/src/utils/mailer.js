@@ -34,7 +34,7 @@ function getTransporter() {
 }
 
 function fromAddress() {
-  return process.env.EMAIL_FROM || process.env.EMAIL_USER || "CampusHub <no-reply@campushub.local>";
+  return process.env.EMAIL_FROM || process.env.EMAIL_USER || "Gibiyachin <no-reply@campushub.local>";
 }
 
 /**

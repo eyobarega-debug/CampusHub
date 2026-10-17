@@ -396,4 +396,328 @@ router.get(
   })
 );
 
+// --- CampusHub Official Receiving Accounts Configuration ---
+const RECEIVING_METHODS = ["cbe", "telebirr", "awash", "dashen", "abyssinia", "other"];
+const receivingBody = z.object({
+  method: z.enum(RECEIVING_METHODS),
+  accountName: z.string().trim().min(2).max(80),
+  accountNumber: z.string().trim().min(4).max(40),
+  instructions: z.string().trim().max(300).optional(),
+  isDefault: z.boolean().optional(),
+});
+
+router.get(
+  "/receiving-accounts",
+  asyncHandler(async (req, res) => {
+    const { rows } = await db.query(
+      `SELECT * FROM payout_accounts
+        WHERE ($1::uuid IS NULL OR university_id = $1) AND is_campus_hub = true AND active
+        ORDER BY is_default DESC, created_at`,
+      [req.tenant.universityId]
+    );
+    res.json({ accounts: rows });
+  })
+);
+
+router.post(
+  "/receiving-accounts",
+  validate({ body: receivingBody }),
+  asyncHandler(async (req, res) => {
+    const uniId = req.tenant.universityId || req.user.university_id;
+    if (!uniId) throw badRequest("university_id is required");
+    const b = req.body;
+
+    const account = await db.withTransaction(async (client) => {
+      const makeDefault = b.isDefault === true;
+      if (makeDefault) {
+        await client.query(
+          "UPDATE payout_accounts SET is_default = false WHERE university_id = $1 AND is_campus_hub = true",
+          [uniId]
+        );
+      }
+      const { rows } = await client.query(
+        `INSERT INTO payout_accounts (university_id, owner_id, method, account_name, account_number, instructions, is_default, is_campus_hub, active)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,true,true) RETURNING *`,
+        [uniId, req.user.id, b.method, b.accountName, b.accountNumber, b.instructions || null, makeDefault]
+      );
+      return rows[0];
+    });
+
+    await audit(req.user.id, "receiving_account.create", "payout_account", account.id, {
+      universityId: uniId, method: account.method,
+    });
+    res.status(201).json({ account });
+  })
+);
+
+router.patch(
+  "/receiving-accounts/:id",
+  validate({ body: receivingBody.partial() }),
+  asyncHandler(async (req, res) => {
+    const b = req.body;
+    const account = await db.withTransaction(async (client) => {
+      const { rows } = await client.query(
+        "SELECT * FROM payout_accounts WHERE id = $1 AND is_campus_hub = true AND active FOR UPDATE",
+        [req.params.id]
+      );
+      const acc = rows[0];
+      if (!acc) throw notFound("Receiving account not found");
+      assertSameTenant(req, acc.university_id, "Receiving account");
+
+      if (b.isDefault === true) {
+        await client.query(
+          "UPDATE payout_accounts SET is_default = false WHERE university_id = $1 AND is_campus_hub = true",
+          [acc.university_id]
+        );
+      }
+
+      const upd = await client.query(
+        `UPDATE payout_accounts SET
+           method = COALESCE($2, method), account_name = COALESCE($3, account_name),
+           account_number = COALESCE($4, account_number), is_default = COALESCE($5, is_default),
+           instructions = COALESCE($6, instructions)
+         WHERE id = $1 RETURNING *`,
+        [req.params.id, b.method ?? null, b.accountName ?? null, b.accountNumber ?? null, b.isDefault ?? null, b.instructions ?? null]
+      );
+      return upd.rows[0];
+    });
+
+    await audit(req.user.id, "receiving_account.update", "payout_account", account.id, null);
+    res.json({ account });
+  })
+);
+
+router.delete(
+  "/receiving-accounts/:id",
+  asyncHandler(async (req, res) => {
+    const { rows } = await db.query(
+      "SELECT * FROM payout_accounts WHERE id = $1 AND is_campus_hub = true AND active",
+      [req.params.id]
+    );
+    if (!rows[0]) throw notFound("Receiving account not found");
+    assertSameTenant(req, rows[0].university_id, "Receiving account");
+    await db.query("UPDATE payout_accounts SET active = false, is_default = false WHERE id = $1", [req.params.id]);
+    await audit(req.user.id, "receiving_account.delete", "payout_account", req.params.id, null);
+    res.json({ ok: true });
+  })
+);
+
+// --- Event Ticket Payments Review Queue (Admin Only) ---
+router.get(
+  "/events/tickets/pending",
+  asyncHandler(async (req, res) => {
+    const { rows } = await db.query(
+      `SELECT p.id AS payment_id, p.amount, p.status AS payment_status, p.created_at AS payment_date,
+              pr.id AS proof_id, pr.reference_number, pr.file_name, pr.created_at AS proof_date,
+              t.id AS ticket_id, t.status AS ticket_status,
+              e.id AS event_id, e.title AS event_title, e.date_time AS event_date,
+              tt.name AS ticket_type, tt.price,
+              u.id AS student_id, u.name AS student_name, u.email AS student_email,
+              org.id AS organizer_id, org.name AS organizer_name,
+              ROUND((p.amount * 0.025), 2) AS commission_amount,
+              ROUND(p.amount - ROUND(p.amount * 0.025, 2), 2) AS organizer_payable
+         FROM payments p
+         JOIN tickets t ON t.id = p.transaction_id
+         JOIN events e ON e.id = t.event_id
+         JOIN clubs c ON c.id = e.club_id
+         JOIN users org ON org.id = c.lead_user_id
+         JOIN users u ON u.id = p.payer_id
+         JOIN ticket_types tt ON tt.id = t.ticket_type_id
+         LEFT JOIN LATERAL (
+           SELECT id, reference_number, file_name, created_at
+             FROM payment_proofs WHERE payment_id = p.id AND status = 'submitted'
+            ORDER BY created_at DESC LIMIT 1
+         ) pr ON true
+        WHERE p.transaction_type = 'ticket'
+          AND p.status = 'under_review'
+          AND ($1::uuid IS NULL OR p.university_id = $1)
+        ORDER BY p.created_at DESC`,
+      [req.tenant.universityId]
+    );
+    res.json({ tickets: rows, pendingPayments: rows });
+  })
+);
+
+// --- Event Organizer Payouts Management ---
+router.get(
+  "/payouts/organizers",
+  asyncHandler(async (req, res) => {
+    const { rows } = await db.query(
+      `SELECT org.id AS organizer_id, org.name AS organizer_name, org.email AS organizer_email,
+              COUNT(p.id)::int AS tickets_sold,
+              COALESCE(SUM(p.amount), 0)::float AS total_ticket_revenue,
+              COALESCE(SUM(ROUND(p.amount * 0.025, 2)), 0)::float AS commission_earned,
+              COALESCE(SUM(ROUND(p.amount - ROUND(p.amount * 0.025, 2), 2)), 0)::float AS organizer_amount_owed,
+              COALESCE((
+                SELECT SUM(op.amount) FROM organizer_payouts op
+                 WHERE op.organizer_id = org.id AND op.status = 'completed'
+              ), 0)::float AS amount_paid
+         FROM users org
+         JOIN clubs c ON c.lead_user_id = org.id
+         JOIN events e ON e.club_id = c.id
+         JOIN tickets t ON t.event_id = e.id
+         JOIN payments p ON p.transaction_id = t.id AND p.transaction_type = 'ticket' AND p.status = 'confirmed'
+        WHERE ($1::uuid IS NULL OR e.university_id = $1)
+          AND t.status IN ('active', 'used')
+          AND e.status <> 'cancelled'
+        GROUP BY org.id, org.name, org.email
+        ORDER BY (COALESCE(SUM(ROUND(p.amount - ROUND(p.amount * 0.025, 2), 2)), 0) - COALESCE((
+          SELECT SUM(op.amount) FROM organizer_payouts op WHERE op.organizer_id = org.id AND op.status = 'completed'
+        ), 0)) DESC`,
+      [req.tenant.universityId]
+    );
+
+    const organizers = rows.map((r) => {
+      const netPayable = Math.round(r.organizer_amount_owed * 100) / 100;
+      const paidOut = Math.round(r.amount_paid * 100) / 100;
+      const currentBalance = Math.max(0, Math.round((netPayable - paidOut) * 100) / 100);
+      return {
+        ...r,
+        total_sales: r.total_ticket_revenue,
+        platform_commission: r.commission_earned,
+        net_payable: netPayable,
+        paid_out: paidOut,
+        current_balance: currentBalance,
+        remainingOwed: currentBalance,
+      };
+    });
+    res.json({ organizers });
+  })
+);
+
+router.post(
+  "/payouts/organizers/:organizerId",
+  validate({
+    body: z.object({
+      amount: z.number().positive(),
+      referenceNumber: z.string().trim().min(3),
+      notes: z.string().optional(),
+      eventId: z.string().uuid().optional(),
+    }),
+  }),
+  asyncHandler(async (req, res) => {
+    const { amount, referenceNumber, notes, eventId } = req.body;
+    const normRef = referenceNumber.trim();
+
+    if (!Number.isFinite(amount) || amount <= 0) {
+      throw badRequest("Enter a valid positive payout amount", "INVALID_AMOUNT");
+    }
+
+    const payout = await db.withTransaction(async (client) => {
+      // 1. Lock organizer record row to prevent concurrent race conditions on payout calculation
+      const { rows: orgRows } = await client.query(
+        "SELECT id, name, email, university_id FROM users WHERE id = $1 AND ($2::uuid IS NULL OR university_id = $2) FOR UPDATE",
+        [req.params.organizerId, req.tenant.universityId]
+      );
+      const organizer = orgRows[0];
+      if (!organizer) throw notFound("Organizer not found");
+
+      // FIX 2: Authoritative university determination
+      const targetUniId = organizer.university_id;
+      if (!targetUniId) {
+        throw badRequest("Organizer is not associated with any university", "NO_ORGANIZER_UNIVERSITY");
+      }
+      if (req.user.role !== "super_admin" && req.user.university_id !== targetUniId) {
+        throw forbidden("Not authorized for this university's payouts");
+      }
+
+      // 2. Check for duplicate completed payout reference
+      const { rows: existingRef } = await client.query(
+        "SELECT id FROM organizer_payouts WHERE university_id = $1 AND lower(trim(reference_number)) = lower($2) AND status = 'completed'",
+        [targetUniId, normRef]
+      );
+      if (existingRef.length > 0) {
+        throw conflict("A payout with this transfer reference has already been recorded", "DUPLICATE_TRANSFER_REFERENCE");
+      }
+
+      // 3. Calculate organizer's net payable from confirmed uncancelled tickets for published/completed events
+      // (Collected ticket amount minus rounded 2.5% platform commission)
+      const { rows: revRows } = await client.query(
+        `SELECT COALESCE(SUM(ROUND(p.amount - ROUND(p.amount * 0.025, 2), 2)), 0)::numeric(12,2) AS total_payable
+           FROM tickets t
+           JOIN events e ON e.id = t.event_id
+           JOIN clubs c ON c.id = e.club_id
+           JOIN payments p ON p.transaction_id = t.id AND p.transaction_type = 'ticket' AND p.status = 'confirmed'
+          WHERE c.lead_user_id = $1
+            AND e.university_id = $2
+            AND t.status IN ('active', 'used')
+            AND e.status <> 'cancelled'`,
+        [organizer.id, targetUniId]
+      );
+      const totalPayable = Number(revRows[0]?.total_payable || 0);
+
+      // 4. Calculate total previously completed payouts for this organizer and university
+      const { rows: paidRows } = await client.query(
+        `SELECT COALESCE(SUM(amount), 0)::numeric(12,2) AS total_paid
+           FROM organizer_payouts
+          WHERE organizer_id = $1 AND status = 'completed' AND university_id = $2`,
+        [organizer.id, targetUniId]
+      );
+      const totalPaid = Number(paidRows[0]?.total_paid || 0);
+      const currentBalance = Math.max(0, Math.round((totalPayable - totalPaid) * 100) / 100);
+
+      if (currentBalance <= 0) {
+        throw conflict("Organizer has no outstanding balance owed", "NO_OUTSTANDING_BALANCE");
+      }
+
+      const requestedAmount = Math.round(amount * 100) / 100;
+      if (requestedAmount > currentBalance) {
+        throw badRequest(
+          `Payout amount (${requestedAmount.toFixed(2)} birr) exceeds outstanding balance of ${currentBalance.toFixed(2)} birr`,
+          "EXCESSIVE_PAYOUT"
+        );
+      }
+
+      // 5. Insert completed payout record with normalized reference and non-null university_id
+      let inserted;
+      try {
+        const insertRes = await client.query(
+          `INSERT INTO organizer_payouts
+             (university_id, organizer_id, event_id, amount, status, reference_number, notes, recorded_by, created_at, completed_at)
+           VALUES ($1, $2, $3, $4, 'completed', $5, $6, $7, now(), now())
+           RETURNING *`,
+          [targetUniId, organizer.id, eventId || null, requestedAmount, normRef, notes || null, req.user.id]
+        );
+        inserted = insertRes.rows[0];
+      } catch (insertErr) {
+        if (insertErr.code === "23505" && String(insertErr.constraint || insertErr.message || "").toLowerCase().includes("organizer_payouts")) {
+          throw conflict("A payout with this transfer reference has already been recorded", "DUPLICATE_TRANSFER_REFERENCE");
+        }
+        throw insertErr;
+      }
+
+      return { payout: inserted, organizer, remainingBalance: Math.round((currentBalance - requestedAmount) * 100) / 100 };
+    });
+
+    await audit(req.user.id, "organizer_payout.recorded", "organizer_payout", payout.payout.id, {
+      organizerId: payout.organizer.id, amount, referenceNumber: normRef,
+    });
+
+    await notify(
+      payout.organizer.id,
+      "payout_update",
+      "Organizer payout confirmed",
+      `A payout of ${amount.toFixed(2)} birr has been recorded (Reference: ${normRef}).`
+    );
+
+    res.status(201).json({ payout: payout.payout, remainingBalance: payout.remainingBalance });
+  })
+);
+
+router.get(
+  "/payouts/history",
+  asyncHandler(async (req, res) => {
+    const { rows } = await db.query(
+      `SELECT op.*, u.name AS organizer_name, u.email AS organizer_email, admin.name AS recorded_by_name
+         FROM organizer_payouts op
+         JOIN users u ON u.id = op.organizer_id
+         JOIN users admin ON admin.id = op.recorded_by
+        WHERE ($1::uuid IS NULL OR op.university_id = $1)
+        ORDER BY op.created_at DESC LIMIT 100`,
+      [req.tenant.universityId]
+    );
+    res.json({ payouts: rows });
+  })
+);
+
 module.exports = router;

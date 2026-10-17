@@ -5,7 +5,7 @@ const { requireAuth, requireRole } = require("../../middleware/auth");
 const { validate } = require("../../middleware/validate");
 const { scopeTo, assertSameTenant } = require("../../middleware/tenant");
 const { asyncHandler, badRequest, notFound, forbidden, conflict } = require("../../utils/errors");
-const { notify } = require("../../utils/notify");
+const { notify, audit } = require("../../utils/notify");
 const payments = require("../../services/payments");
 const orderStatus = require("../../services/orderStatus");
 
@@ -329,6 +329,50 @@ router.post(
   })
 );
 
+// Buyer confirmation: student confirms receiving the physical material when delivered or collected
+router.post(
+  "/:id/confirm-receipt",
+  requireAuth(),
+  requireRole("student"),
+  idParams,
+  asyncHandler(async (req, res) => {
+    const result = await db.withTransaction(async (client) => {
+      const { rows } = await client.query(
+        "SELECT o.*, s.merchant_id FROM orders o JOIN stores s ON s.id=o.store_id WHERE o.id=$1 FOR UPDATE OF o",
+        [req.params.id]
+      );
+      const order = rows[0];
+      if (!order) throw notFound("Order not found");
+      assertSameTenant(req, order.university_id, "Order");
+      if (order.buyer_id !== req.user.id) throw forbidden("Only the buyer can confirm receiving this order");
+      if (!["confirmed", "ready"].includes(order.status)) {
+        throw conflict(`Order cannot be confirmed as received while in status "${order.status}"`, "INVALID_STATUS");
+      }
+      await client.query("UPDATE orders SET buyer_confirmed_at = now() WHERE id = $1", [order.id]);
+      const { order: updated } = await orderStatus.transition(client, order.id, "completed", {
+        actorId: req.user.id,
+        note: "Buyer confirmed material receipt",
+      });
+      return updated;
+    });
+
+    await audit(req.user.id, "order.buyer_confirmed", "order", result.id, {
+      orderId: result.id, buyerConfirmedAt: new Date().toISOString(),
+    });
+    try {
+      await notify(
+        result.merchant_id,
+        "order_update",
+        "Material receipt confirmed",
+        `The buyer confirmed receiving Order #${orderStatus.shortId(result.id)}.`
+      );
+    } catch (err) {
+      console.warn("[orders] receipt notification failed (non-fatal):", err.message);
+    }
+    res.json({ order: present(result, req.user) });
+  })
+);
+
 // --- Payment finalizers registered with the abstraction layer (SRS Section 16) ---
 // The payment layer calls these inside ITS transaction, so the order status, its history row and the
 // payment/commission records commit (or roll back) together.
@@ -347,9 +391,10 @@ payments.registerFinalizer("order", {
     if (!rows[0]) return null;
     return { userId: rows[0].merchant_id, description: `Order #${orderId.slice(0, 8)} from ${rows[0].name} (${rows[0].items} item(s))` };
   },
-  // Payment succeeded -> Pending becomes Paid.
+  // Merchant confirms payment receipt -> Pending becomes Paid.
   onConfirmed: async (orderId, client) => {
-    const { order } = await orderStatus.transition(client, orderId, "confirmed", { actorId: null, note: "Payment confirmed" });
+    await client.query("UPDATE orders SET merchant_confirmed_at = now() WHERE id = $1", [orderId]);
+    const { order } = await orderStatus.transition(client, orderId, "confirmed", { actorId: null, note: "Merchant confirmed payment receipt" });
     await orderStatus.queueNotification(
       client, order.merchant_id, "New order received",
       `Order #${orderStatus.shortId(order.id)} — ${Number(order.total_amount).toFixed(2)} birr`

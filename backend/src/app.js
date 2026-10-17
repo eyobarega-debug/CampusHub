@@ -2,6 +2,7 @@ const express = require("express");
 const cors = require("cors");
 const morgan = require("morgan");
 const helmet = require("helmet");
+const cookieParser = require("cookie-parser");
 require("dotenv").config({ quiet: true });
 
 const { errorHandler } = require("./utils/errors");
@@ -18,15 +19,33 @@ const allowedOrigins = (process.env.CORS_ORIGINS || "http://localhost:5173,http:
   .split(",")
   .map((origin) => origin.trim())
   .filter(Boolean);
-app.use(cors({
-  origin(origin, callback) {
-    // Requests without Origin include health checks and server-to-server calls.
-    callback(null, !origin || allowedOrigins.includes(origin));
-  },
-}));
-app.use(express.json({ limit: "2mb" }));
+app.use(
+  cors({
+    origin(origin, callback) {
+      // Requests without Origin include health checks and server-to-server calls.
+      callback(null, !origin || allowedOrigins.includes(origin));
+    },
+    credentials: true,
+  })
+);
+app.use(cookieParser());
+app.use(
+  express.json({
+    limit: "2mb",
+    verify: (req, res, buf) => {
+      req.rawBody = buf;
+    },
+  })
+);
 app.use(morgan(process.env.NODE_ENV === "test" ? "tiny" : "dev"));
-app.use("/uploads", express.static(require("path").join(__dirname, "..", "uploads")));
+app.use(
+  "/uploads",
+  express.static(require("path").join(__dirname, "..", "uploads"), {
+    setHeaders: (res) => {
+      res.setHeader("X-Content-Type-Options", "nosniff");
+    },
+  })
+);
 
 app.get("/health", (req, res) => res.json({ ok: true, service: "campushub-api", time: new Date().toISOString() }));
 
@@ -46,6 +65,8 @@ app.use("/api/events", tenant,requireFeature("events"), require("./modules/ticke
 app.use("/api/reviews", tenant, require("./modules/reviews/routes"));
 app.use("/api/reports", tenant, require("./modules/reports/routes"));
 app.use("/api/notifications", tenant, require("./modules/notifications/routes"));
+// External payment gateway webhooks (server-to-server POST, unauthenticated by JWT, tenant resolved per payment)
+app.use("/api/payments/webhook", require("./modules/payments/webhook.routes"));
 // Manual payment-with-proof routes must come first: the generic payments router below has GET /:id.
 app.use("/api/payments", tenant, require("./modules/payments/manual.routes"));
 app.use("/api/payout-accounts", tenant, require("./modules/payments/payout.routes"));

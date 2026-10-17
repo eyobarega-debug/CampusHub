@@ -48,7 +48,7 @@ export default function Register() {
 
   return (
     <div className="mx-auto max-w-sm py-12">
-      <PageHeader title="Create your account" subtitle="Join CampusHub as a student or apply as a merchant later." />
+      <PageHeader title="Create your account" subtitle="Join ግቢያችን (Gibiyachin) as a student or apply as a merchant later." />
       <Card className="p-6">
         <form onSubmit={onSubmit} className="space-y-4">
           <ErrorBanner message={error} />

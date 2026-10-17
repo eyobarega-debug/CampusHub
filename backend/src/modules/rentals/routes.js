@@ -146,6 +146,7 @@ router.patch(
   asyncHandler(async (req, res) => {
     const { rows: existingRows } = await db.query("SELECT * FROM rental_items WHERE id = $1", [req.params.id]);
     if (!existingRows[0]) throw notFound("Rental item not found");
+    assertSameTenant(req, existingRows[0].university_id, "Rental item");
     if (existingRows[0].owner_id !== req.user.id) throw forbidden();
 
     if (req.body.availableFrom || req.body.availableTo) {
@@ -213,6 +214,7 @@ router.post(
       transactionId: booking.id,
       amount: booking.total_amount,
       buyerId: req.user.id,
+      buyerEmail: req.user.email,
       method: req.body.paymentMethod,
     });
     res.status(201).json({ booking, payment });
@@ -234,8 +236,9 @@ router.get(
   asyncHandler(async (req, res) => {
     const { rows } = await db.query(
       `SELECT b.*, ri.title, ri.owner_id FROM rental_bookings b JOIN rental_items ri ON ri.id = b.rental_item_id
-       WHERE b.borrower_id = $1 OR ri.owner_id = $1 ORDER BY b.created_at DESC`,
-      [req.user.id]
+       WHERE (b.borrower_id = $1 OR ri.owner_id = $1) AND ($2::uuid IS NULL OR b.university_id = $2)
+       ORDER BY b.created_at DESC`,
+      [req.user.id, req.user.role === "super_admin" ? null : req.user.university_id]
     );
     // FR-021 — surface overdue status computed at read time
     const now = new Date();
@@ -255,11 +258,12 @@ router.post(
   asyncHandler(async (req, res) => {
     const booking = await loadBookingWithItem(req.params.id);
     if (!booking) throw notFound("Booking not found");
-    if (![booking.owner_id, booking.borrower_id].includes(req.user.id)) throw forbidden();
+    assertSameTenant(req, booking.university_id, "Rental booking");
+    if (booking.borrower_id !== req.user.id) throw forbidden("Only the renter can confirm physical receipt of the rental item");
     if (booking.status !== "confirmed_awaiting_pickup") throw conflict("Booking is not awaiting pickup");
 
     const { rows } = await db.query(
-      "UPDATE rental_bookings SET status='active', picked_up_at=now() WHERE id=$1 RETURNING *",
+      "UPDATE rental_bookings SET status='active', picked_up_at=now(), renter_confirmed_at=now() WHERE id=$1 RETURNING *",
       [booking.id]
     );
     await notify(booking.borrower_id, "rental_update", `Pickup confirmed for "${booking.title}"`, `Due back ${booking.end_date}`);
@@ -275,6 +279,7 @@ router.post(
   asyncHandler(async (req, res) => {
     const booking = await loadBookingWithItem(req.params.id);
     if (!booking) throw notFound("Booking not found");
+    assertSameTenant(req, booking.university_id, "Rental booking");
     if (booking.owner_id !== req.user.id) throw forbidden("Only the lender confirms a return");
     if (!["active"].includes(booking.status) && new Date(booking.end_date) >= new Date()) {
       throw conflict("Booking is not active");
@@ -317,6 +322,7 @@ router.post(
   asyncHandler(async (req, res) => {
     const booking = await loadBookingWithItem(req.params.id);
     if (!booking) throw notFound("Booking not found");
+    assertSameTenant(req, booking.university_id, "Rental booking");
     if (![booking.owner_id, booking.borrower_id].includes(req.user.id)) throw forbidden();
 
     const { rows } = await db.query(
@@ -352,7 +358,7 @@ payments.registerFinalizer("booking", {
   },
   onConfirmed: async (bookingId, client) => {
     const { rows } = await client.query(
-      "UPDATE rental_bookings SET status='confirmed_awaiting_pickup' WHERE id=$1 RETURNING *",
+      "UPDATE rental_bookings SET status='confirmed_awaiting_pickup', owner_confirmed_at=now() WHERE id=$1 RETURNING *",
       [bookingId]
     );
     const booking = rows[0];
@@ -370,6 +376,29 @@ payments.registerFinalizer("booking", {
   },
   onFailed: async (bookingId, client) => {
     await client.query("UPDATE rental_bookings SET status='cancelled' WHERE id=$1", [bookingId]);
+  },
+  onRefunded: async (bookingId, client, { reason, actorId } = {}) => {
+    const { rows } = await client.query("SELECT * FROM rental_bookings WHERE id = $1 FOR UPDATE", [bookingId]);
+    const booking = rows[0];
+    if (!booking) return;
+    if (!["completed", "cancelled"].includes(booking.status)) {
+      await client.query("UPDATE rental_bookings SET status='cancelled' WHERE id=$1", [bookingId]);
+      const { rows: itemRows } = await client.query("SELECT owner_id, title FROM rental_items WHERE id = $1", [booking.rental_item_id]);
+      const item = itemRows[0];
+      const title = item?.title || "Rental item";
+      if (item?.owner_id) {
+        await client.query("INSERT INTO notifications (user_id, type, title, body) VALUES ($1,'rental_update',$2,$3)", [
+          item.owner_id,
+          "Booking refunded",
+          `The booking for "${title}" (${booking.start_date} to ${booking.end_date}) was refunded and dates have been released.`,
+        ]);
+      }
+      await client.query("INSERT INTO notifications (user_id, type, title, body) VALUES ($1,'rental_update',$2,$3)", [
+        booking.borrower_id,
+        "Booking refunded",
+        `Your booking for "${title}" (${booking.start_date} to ${booking.end_date}) was refunded and cancelled.`,
+      ]);
+    }
   },
 });
 

@@ -146,7 +146,7 @@ export default function EditProfileModal({ user, isOpen, onClose, onSaved }) {
           {activeTab === "preview" ? (
             <div className="space-y-4">
               <p className="text-xs text-slate">
-                This is a live preview of how your updated profile header will appear across CampusHub:
+                This is a live preview of how your updated profile header will appear across ግቢያችን:
               </p>
               <ProfileHeader user={previewUser} isOwner={false} />
             </div>
@@ -304,7 +304,7 @@ export default function EditProfileModal({ user, isOpen, onClose, onSaved }) {
               {/* University Affiliation (Read-Only) */}
               <div className="rounded-lg bg-slate/5 p-3 text-xs text-slate">
                 <span className="font-semibold text-navy">University: </span>
-                {user.university_name || "CampusHub"} ·{" "}
+                {user.university_name || "ግቢያችን"} ·{" "}
                 <span className="italic">
                   University affiliation, role, and verification badges cannot be modified directly.
                 </span>

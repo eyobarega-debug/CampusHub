@@ -1,7 +1,7 @@
 const express = require("express");
 const { z } = require("zod");
 const db = require("../../db");
-const { requireAuth } = require("../../middleware/auth");
+const { requireAuth, optionalAuth } = require("../../middleware/auth");
 const { validate } = require("../../middleware/validate");
 const { asyncHandler, forbidden, badRequest, notFound } = require("../../utils/errors");
 const { hashPassword, comparePassword } = require("../../utils/hash");
@@ -59,11 +59,40 @@ const updateSchema = z.object({
   // Explicitly rejected fields (FR-005 alt flow: role / verification / university are protected)
   role: z.any().optional(),
   verified: z.any().optional(),
+  verificationMethod: z.any().optional(),
+  verification_method: z.any().optional(),
   emailVerified: z.any().optional(),
+  email_verified: z.any().optional(),
   suspended: z.any().optional(),
   universityId: z.any().optional(),
+  university_id: z.any().optional(),
   id: z.any().optional(),
+  passwordHash: z.any().optional(),
+  password_hash: z.any().optional(),
+  createdAt: z.any().optional(),
+  created_at: z.any().optional(),
+  updatedAt: z.any().optional(),
+  updated_at: z.any().optional(),
 });
+
+const PROTECTED_FIELDS = [
+  "role",
+  "verified",
+  "verificationMethod",
+  "verification_method",
+  "emailVerified",
+  "email_verified",
+  "suspended",
+  "universityId",
+  "university_id",
+  "id",
+  "passwordHash",
+  "password_hash",
+  "createdAt",
+  "created_at",
+  "updatedAt",
+  "updated_at",
+];
 
 // PATCH /api/users/me — update own profile information
 router.patch(
@@ -71,15 +100,10 @@ router.patch(
   requireAuth(),
   validate({ body: updateSchema }),
   asyncHandler(async (req, res) => {
-    if (
-      req.body.role !== undefined ||
-      req.body.verified !== undefined ||
-      req.body.emailVerified !== undefined ||
-      req.body.suspended !== undefined ||
-      req.body.universityId !== undefined ||
-      req.body.id !== undefined
-    ) {
-      throw forbidden("Role, verification status, university affiliation, and account ID cannot be changed by user");
+    for (const field of PROTECTED_FIELDS) {
+      if (req.body[field] !== undefined) {
+        throw forbidden("Role, verification status, university affiliation, and account ID cannot be changed by user", "PROTECTED_FIELD");
+      }
     }
 
     const { name, phone, avatarUrl, coverImageUrl, bio, department, year, privacySettings, notificationPrefs } = req.body;
@@ -445,6 +469,7 @@ router.get(
 // GET /api/users/:id/public — public profile with privacy filtering & role-specific showcases
 router.get(
   "/:id/public",
+  optionalAuth(),
   asyncHandler(async (req, res) => {
     const { rows } = await db.query(
       `SELECT u.id, u.name, u.role, u.university_id, u.verified, u.verification_method,
@@ -453,12 +478,13 @@ router.get(
               uni.name AS university_name
        FROM users u
        LEFT JOIN universities uni ON uni.id = u.university_id
-       WHERE u.id = $1 AND u.suspended = false`,
+       WHERE u.id = $1 AND u.suspended = false AND (uni.id IS NULL OR uni.status = 'active')`,
       [req.params.id]
     );
     const user = rows[0];
     if (!user) throw notFound("Profile not found or unavailable");
 
+    const isSameCampus = (req.user && (req.user.role === "super_admin" || req.user.university_id === user.university_id)) || (req.tenant && req.tenant.universityId === user.university_id);
     const privacy = user.privacy_settings || { showEmail: false, showPhone: false, showActivity: true };
     const publicUser = {
       id: user.id,
@@ -470,15 +496,15 @@ router.get(
       avatarUrl: user.avatar_url,
       coverImageUrl: user.cover_image_url,
       bio: user.bio,
-      department: user.department,
-      year: user.year,
+      department: (!isSameCampus && user.role === "student") ? null : user.department,
+      year: (!isSameCampus && user.role === "student") ? null : user.year,
       createdAt: user.created_at,
       email: privacy.showEmail ? user.email : null,
       phone: privacy.showPhone ? user.phone : null,
     };
 
     let roleData = {};
-    if (privacy.showActivity !== false) {
+    if (privacy.showActivity !== false && isSameCampus) {
       if (user.role === "merchant") {
         const storeRes = await db.query(
           `SELECT id, name, logo_url, description, status, created_at FROM stores

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useAuth, errMsg } from "../context/AuthContext";
 import { Button, Card, ErrorBanner, Input, PageHeader, SuccessBanner } from "../components/ui";
@@ -8,9 +8,15 @@ export default function Login() {
   const navigate = useNavigate();
   const location = useLocation();
   const [form, setForm] = useState({ email: "", password: "" });
-  const [error, setError] = useState("");
+  const [error, setError] = useState(location.state?.error || "");
   const [loading, setLoading] = useState(false);
   const [flash] = useState(location.state?.flash || "");
+
+  useEffect(() => {
+    if (location.state?.error) {
+      setError(location.state.error);
+    }
+  }, [location.state?.error]);
 
   async function onSubmit(e) {
     e.preventDefault();
@@ -29,7 +35,7 @@ export default function Login() {
 
   return (
     <div className="mx-auto max-w-sm py-12">
-      <PageHeader title="Log in" subtitle="Welcome back to CampusHub." />
+      <PageHeader title="Log in" subtitle="Welcome back to ግቢያችን (Gibiyachin)." />
       <Card className="p-6">
         <form onSubmit={onSubmit} className="space-y-4">
           <ErrorBanner message={error} />

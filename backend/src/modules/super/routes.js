@@ -57,6 +57,7 @@ router.post(
     body: z.object({
       name: z.string().min(2),
       domain: z.string().regex(domainRe, "Must look like campus.edu.et").optional(),
+      permittedDomains: z.array(z.string().regex(domainRe)).optional(),
       slug: z.string().regex(/^[a-z0-9-]{2,60}$/).optional(),
       featureFlags: z.record(z.string(), z.boolean()).optional(),
       admin: z.object({ name: z.string().min(2), email: z.string().email(), password: z.string().min(8), phone: z.string().optional() }),
@@ -64,20 +65,26 @@ router.post(
     }),
   }),
   asyncHandler(async (req, res) => {
-    const { name, domain, featureFlags, admin, initialClubs } = req.body;
+    const { name, domain, permittedDomains, featureFlags, admin, initialClubs } = req.body;
     const slug = req.body.slug || slugify(name);
 
     const dupEmail = await db.query("SELECT 1 FROM users WHERE email = $1", [admin.email.toLowerCase()]);
     if (dupEmail.rows.length) throw conflict("An account with the admin's email already exists", "EMAIL_TAKEN");
+
+    const resolvedPermitted = permittedDomains && permittedDomains.length
+      ? permittedDomains.map((d) => d.toLowerCase())
+      : domain
+      ? [domain.toLowerCase()]
+      : [];
 
     const passwordHash = await hashPassword(admin.password);
     const result = await db.withTransaction(async (client) => {
       let uni;
       try {
         const r = await client.query(
-          `INSERT INTO universities (name, domain, slug, feature_flags)
-           VALUES ($1,$2,$3,$4) RETURNING *`,
-          [name, domain ? domain.toLowerCase() : null, slug, JSON.stringify(featureFlags || {})]
+          `INSERT INTO universities (name, domain, permitted_domains, slug, feature_flags)
+           VALUES ($1,$2,$3,$4,$5) RETURNING *`,
+          [name, domain ? domain.toLowerCase() : null, resolvedPermitted, slug, JSON.stringify(featureFlags || {})]
         );
         uni = r.rows[0];
       } catch (e) {
@@ -111,6 +118,7 @@ router.patch(
     body: z.object({
       name: z.string().min(2).optional(),
       domain: z.string().regex(domainRe).nullable().optional(),
+      permittedDomains: z.array(z.string().regex(domainRe)).optional(),
       status: z.enum(["active", "suspended"]).optional(),
       isolationMode: z.enum(["shared", "dedicated"]).optional(),
       isolationReason: z.string().min(5).optional(),
@@ -130,16 +138,19 @@ router.patch(
         `UPDATE universities SET
            name = COALESCE($1, name),
            domain = CASE WHEN $2::boolean THEN $3 ELSE domain END,
-           status = COALESCE($4, status),
-           isolation_mode = COALESCE($5, isolation_mode),
-           isolation_reason = CASE WHEN $5 = 'shared' THEN NULL ELSE COALESCE($6, isolation_reason) END,
-           feature_flags = feature_flags || COALESCE($7::jsonb, '{}'::jsonb),
+           permitted_domains = CASE WHEN $4::boolean THEN $5 ELSE permitted_domains END,
+           status = COALESCE($6, status),
+           isolation_mode = COALESCE($7, isolation_mode),
+           isolation_reason = CASE WHEN $7 = 'shared' THEN NULL ELSE COALESCE($8, isolation_reason) END,
+           feature_flags = feature_flags || COALESCE($9::jsonb, '{}'::jsonb),
            updated_at = now()
-         WHERE id = $8 RETURNING *`,
+         WHERE id = $10 RETURNING *`,
         [
           b.name ?? null,
           b.domain !== undefined,
           b.domain === undefined ? null : b.domain && b.domain.toLowerCase(),
+          b.permittedDomains !== undefined,
+          b.permittedDomains ? b.permittedDomains.map((d) => d.toLowerCase()) : null,
           b.status ?? null,
           b.isolationMode ?? null,
           b.isolationReason ?? null,

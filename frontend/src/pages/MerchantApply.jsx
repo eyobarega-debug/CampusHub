@@ -28,7 +28,7 @@ export default function MerchantApply() {
 
   return (
     <div className="mx-auto max-w-md py-8">
-      <PageHeader title="Apply to sell on CampusHub" subtitle="Once approved, you'll get a store dashboard to add products and manage orders." />
+      <PageHeader title="Apply to sell on ግቢያችን" subtitle="Once approved, you'll get a store dashboard to add products and manage orders." />
       <Card className="p-6">
         <form onSubmit={onSubmit} className="space-y-4">
           <ErrorBanner message={error} />

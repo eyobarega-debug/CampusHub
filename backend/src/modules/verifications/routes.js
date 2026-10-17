@@ -6,7 +6,8 @@ const { requireAuth } = require("../../middleware/auth");
 const { validate } = require("../../middleware/validate");
 const { asyncHandler, badRequest, notFound, forbidden, conflict } = require("../../utils/errors");
 const { notify, audit } = require("../../utils/notify");
-const { upload, sendDocument } = require("./proofs");
+const multer = require("multer");
+const { upload, processVerificationUpload, sendDocument } = require("./proofs");
 
 const router = express.Router();
 
@@ -46,12 +47,14 @@ router.post(
     }
     if (!req.user.university_id) throw forbidden("Your account is not attached to a university");
 
+    const processed = await processVerificationUpload(req.file);
+
     try {
       const { rows } = await db.query(
         `INSERT INTO verification_requests (user_id, university_id, document_type, document_url, student_note, status)
          VALUES ($1, $2, $3, $4, $5, 'pending')
          RETURNING *`,
-        [req.user.id, req.user.university_id, req.body.documentType, `/private_uploads/proofs/${req.file.filename}`, req.body.studentNote || null]
+        [req.user.id, req.user.university_id, req.body.documentType, `/private_uploads/proofs/${processed.filename}`, req.body.studentNote || null]
       );
 
       await notify(
@@ -75,7 +78,9 @@ router.post(
     } catch (err) {
       // Clean up the uploaded file when the row could not be created
       // (e.g. a concurrent duplicate was caught by the unique index).
-      require("fs").unlink(require("path").join(__dirname, "..", "..", "..", "private_uploads", "proofs", req.file.filename), () => {});
+      if (processed?.filename) {
+        require("fs").unlink(require("path").join(__dirname, "..", "..", "..", "private_uploads", "proofs", processed.filename), () => {});
+      }
       if (err.code === "23505") throw conflict("You already have a pending verification request", "PENDING_EXISTS");
       throw err;
     }

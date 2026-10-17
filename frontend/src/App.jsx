@@ -24,6 +24,7 @@ import MyRentalBookings from "./pages/MyRentalBookings";
 import Events from "./pages/Events";
 import EventDetail from "./pages/EventDetail";
 import MyTickets from "./pages/MyTickets";
+import TicketVerifyPage from "./pages/TicketVerifyPage";
 import OrganizerEvents from "./pages/OrganizerEvents";
 import OrganizerEventDetail from "./pages/OrganizerEventDetail";
 import Merchant from "./pages/Merchant";
@@ -82,6 +83,8 @@ export default function App() {
             <Route path="/events" element={<Events />} />
             <Route path="/events/:id" element={<EventDetail />} />
             <Route path="/tickets" element={<ProtectedRoute role={["student", ...ADMIN_ROLES]}><MyTickets /></ProtectedRoute>} />
+            <Route path="/tickets/verify" element={<ProtectedRoute role={["organizer", ...ADMIN_ROLES]}><TicketVerifyPage /></ProtectedRoute>} />
+            <Route path="/tickets/verify/:token" element={<TicketVerifyPage />} />
 
             <Route path="/organizer" element={<ProtectedRoute role={["organizer", ...ADMIN_ROLES]}><OrganizerEvents /></ProtectedRoute>} />
             <Route path="/organizer/:id" element={<ProtectedRoute role={["organizer", ...ADMIN_ROLES]}><OrganizerEventDetail /></ProtectedRoute>} />

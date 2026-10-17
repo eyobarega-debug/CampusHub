@@ -72,11 +72,11 @@ export default function MyRentalBookings() {
                 </div>
 
                 <div className="mt-3 flex flex-wrap gap-2">
-                  {!iAmBorrower && b.status === "confirmed_awaiting_pickup" && (
-                    <Button onClick={() => act("pickup", b.id)}>Confirm pickup</Button>
-                  )}
                   {iAmBorrower && b.status === "confirmed_awaiting_pickup" && (
-                    <Button onClick={() => act("pickup", b.id)}>Confirm pickup</Button>
+                    <Button variant="accent" onClick={() => act("pickup", b.id)}>Confirm item receipt / pickup</Button>
+                  )}
+                  {!iAmBorrower && b.status === "confirmed_awaiting_pickup" && (
+                    <span className="text-xs text-slate self-center italic">Waiting for renter to confirm physical pickup</span>
                   )}
                   {!iAmBorrower && ["active", "overdue"].includes(b.status) && (
                     <Button variant="accent" onClick={() => act("return", b.id, { condition: "good" })}>
@@ -87,6 +87,17 @@ export default function MyRentalBookings() {
                     <Button variant="outline" onClick={() => setDisputeFor(b.id)}>Report a problem</Button>
                   )}
                 </div>
+
+                {(b.owner_confirmed_at || b.renter_confirmed_at) && (
+                  <div className="mt-2 flex flex-wrap gap-4 rounded-lg bg-paper px-3 py-1.5 text-xs text-slate">
+                    {b.owner_confirmed_at && (
+                      <span>✓ Payment confirmed by owner ({new Date(b.owner_confirmed_at).toLocaleDateString()})</span>
+                    )}
+                    {b.renter_confirmed_at && (
+                      <span className="text-ok font-medium">✓ Item pickup confirmed by renter ({new Date(b.renter_confirmed_at).toLocaleDateString()})</span>
+                    )}
+                  </div>
+                )}
 
                 {disputeFor === b.id && (
                   <div className="mt-3 space-y-2 border-t border-slate/15 pt-3">

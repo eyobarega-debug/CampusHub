@@ -15,10 +15,10 @@ export default function Home() {
   return (
     <div>
       <div className="rounded-2xl bg-navy px-8 py-14 text-center text-white">
-        <h1 className="text-3xl font-bold sm:text-4xl">Welcome to CampusHub</h1>
+        <h1 className="text-3xl font-bold sm:text-4xl">እንኳን ወደ ግቢያችን በደህና መጡ | Welcome to Gibiyachin</h1>
         <p className="mx-auto mt-3 max-w-xl text-white/80">
-          One trusted platform for campus commerce, borrowing, and events — built for the
-          Graduation MVP described in the CampusHub SRS.
+          One trusted University Marketplace & Campus Services Platform for student commerce,
+          borrowing, and events.
         </p>
         {!user && (
           <div className="mt-6 flex justify-center gap-3">
@@ -30,7 +30,7 @@ export default function Home() {
         )}
         {user?.role === "student" && (
           <div className="mt-6 flex justify-center gap-3">
-            <Button as={Link} to="/merchant-apply" variant="accent">Sell on CampusHub as a merchant</Button>
+            <Button as={Link} to="/merchant-apply" variant="accent">Sell on ግቢያችን as a merchant</Button>
           </div>
         )}
       </div>

@@ -44,7 +44,7 @@ function resolveTenant({ required = true } = {}) {
   return async (req, res, next) => {
     try {
       const requested =
-        req.headers["x-university-id"] || req.headers["x-university-slug"] || req.query.universityId || null;
+        req.headers?.["x-university-id"] || req.headers?.["x-university-slug"] || req.query?.universityId || null;
       const user = await tokenUser(req);
 
       if (user && user.role !== "super_admin") {
@@ -56,8 +56,12 @@ function resolveTenant({ required = true } = {}) {
           }
         }
         const university = await loadUniversity(user.university_id);
-        if (!university || university.status !== "active") {
-          throw new ApiError(403, "This university is not active", "TENANT_INACTIVE");
+        if (!university) {
+          throw new ApiError(403, "Your account is not attached to a valid university", "TENANT_INVALID");
+        }
+        if (university.status !== "active") {
+          const code = university.status === "suspended" ? "TENANT_SUSPENDED" : university.status === "archived" ? "TENANT_ARCHIVED" : "TENANT_INACTIVE";
+          throw new ApiError(403, `This university is ${university.status}`, code);
         }
         req.tenant = { universityId: user.university_id, isSuper: false, university };
         return next();

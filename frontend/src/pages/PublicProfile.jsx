@@ -54,7 +54,7 @@ export default function PublicProfile() {
           subtitle={error || "The profile you are looking for does not exist or has been made private."}
           action={
             <Button as={Link} to="/" variant="primary" className="mt-4">
-              Return to CampusHub Home
+              Return to ግቢያችን Home
             </Button>
           }
         />
@@ -63,6 +63,11 @@ export default function PublicProfile() {
   }
 
   const isOwner = currentUser?.id === profile.id;
+  const isCrossCampus = Boolean(
+    currentUser?.university_id &&
+    profile.university_id &&
+    currentUser.university_id !== profile.university_id
+  );
 
   return (
     <div className="mx-auto max-w-5xl space-y-6">
@@ -204,6 +209,13 @@ export default function PublicProfile() {
 
       {profile.role === "student" && (
         <div className="space-y-6">
+          {isCrossCampus && (
+            <div className="flex items-center gap-2 rounded-lg border border-navy/15 bg-navy/5 px-4 py-3 text-xs text-slate">
+              <span>🔒</span>
+              <span>Some marketplace and rental activity is only visible to members of the same campus.</span>
+            </div>
+          )}
+
           {/* Active P2P Resale Listings */}
           <div>
             <div className="mb-3 flex items-center justify-between">

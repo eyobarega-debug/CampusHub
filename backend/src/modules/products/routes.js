@@ -126,9 +126,15 @@ router.patch(
   requireRole("merchant", "admin"),
   validate({ body: productSchema.partial() }),
   asyncHandler(async (req, res) => {
-    const { rows: existingRows } = await db.query("SELECT * FROM products WHERE id = $1", [req.params.id]);
+    const { rows: existingRows } = await db.query(
+      `SELECT p.*, s.university_id AS store_university_id
+       FROM products p JOIN stores s ON s.id = p.store_id
+       WHERE p.id = $1`,
+      [req.params.id]
+    );
     const existing = existingRows[0];
     if (!existing) throw notFound("Product not found");
+    assertSameTenant(req, existing.store_university_id, "Product");
 
     if (req.user.role === "merchant") {
       const storeId = await getOwnedStoreId(req.user.id);
@@ -156,9 +162,16 @@ router.delete(
   requireAuth(),
   requireRole("merchant", "admin"),
   asyncHandler(async (req, res) => {
-    const { rows: existingRows } = await db.query("SELECT * FROM products WHERE id = $1", [req.params.id]);
+    const { rows: existingRows } = await db.query(
+      `SELECT p.*, s.university_id AS store_university_id
+       FROM products p JOIN stores s ON s.id = p.store_id
+       WHERE p.id = $1`,
+      [req.params.id]
+    );
     const existing = existingRows[0];
     if (!existing) throw notFound("Product not found");
+    assertSameTenant(req, existing.store_university_id, "Product");
+
     if (req.user.role === "merchant") {
       const storeId = await getOwnedStoreId(req.user.id);
       if (existing.store_id !== storeId) throw forbidden("You do not own this product");
@@ -173,6 +186,13 @@ router.post(
   "/:id/favorite",
   requireAuth(),
   asyncHandler(async (req, res) => {
+    const { rows } = await db.query(
+      "SELECT p.id, s.university_id FROM products p JOIN stores s ON s.id = p.store_id WHERE p.id = $1 AND p.status <> 'removed'",
+      [req.params.id]
+    );
+    if (!rows[0]) throw notFound("Product not found");
+    assertSameTenant(req, rows[0].university_id, "Product");
+
     await db.query(
       "INSERT INTO favorites (user_id, product_id) VALUES ($1,$2) ON CONFLICT DO NOTHING",
       [req.user.id, req.params.id]
@@ -194,9 +214,16 @@ router.get(
   "/me/favorites",
   requireAuth(),
   asyncHandler(async (req, res) => {
+    const conditions = ["f.user_id = $1"];
+    const params = [req.user.id];
+    scopeTo(req, "s.university_id", conditions, params);
     const { rows } = await db.query(
-      `SELECT p.* FROM favorites f JOIN products p ON p.id = f.product_id WHERE f.user_id = $1 ORDER BY f.created_at DESC`,
-      [req.user.id]
+      `SELECT p.* FROM favorites f
+       JOIN products p ON p.id = f.product_id
+       JOIN stores s ON s.id = p.store_id
+       WHERE ${conditions.join(" AND ")}
+       ORDER BY f.created_at DESC`,
+      params
     );
     res.json({ products: rows });
   })
@@ -211,15 +238,16 @@ router.post(
   requireRole("merchant"),
   validate({ body: z.object({ days: z.number().int().positive().max(30).default(7) }) }),
   asyncHandler(async (req, res) => {
-    const { rows } = await db.query("SELECT p.*, s.merchant_id FROM products p JOIN stores s ON s.id=p.store_id WHERE p.id=$1", [
-      req.params.id,
-    ]);
+    const { rows } = await db.query(
+      "SELECT p.*, s.merchant_id, s.university_id AS store_university_id FROM products p JOIN stores s ON s.id=p.store_id WHERE p.id=$1",
+      [req.params.id]
+    );
     const product = rows[0];
     if (!product) throw notFound("Product not found");
+    assertSameTenant(req, product.store_university_id, "Product");
     if (product.merchant_id !== req.user.id) throw forbidden("You do not own this product");
 
-    const { rows: st } = await db.query("SELECT university_id FROM stores WHERE id = $1", [product.store_id]);
-    const { featuredRatePerDay } = await getFees(st[0].university_id);
+    const { featuredRatePerDay } = await getFees(product.store_university_id);
     const amount = featuredRatePerDay * req.body.days;
     const payment = await payments.initiatePayment({
       transactionType: "promotion",

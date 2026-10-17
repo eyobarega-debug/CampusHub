@@ -17,28 +17,25 @@ const { z } = require("zod");
 const db = require("../../db");
 const { requireAuth } = require("../../middleware/auth");
 const { validate } = require("../../middleware/validate");
-const { asyncHandler, badRequest, conflict, notFound } = require("../../utils/errors");
+const { asyncHandler, badRequest, conflict, notFound, forbidden } = require("../../utils/errors");
 const { notify, audit } = require("../../utils/notify");
 const paymentsService = require("../../services/payments");
 const { RATES } = require("../../services/commissions");
 
+const {
+  createTempUpload,
+  processUpload,
+  removeTempFile,
+  sendFileSafely,
+  UPLOAD_PROFILES,
+} = require("../../services/fileUpload");
+
 const router = express.Router();
 
-const PROOF_DIR = path.join(__dirname, "..", "..", "..", "private_uploads", "proofs");
+const PROOF_DIR = UPLOAD_PROFILES.paymentProof.destDir;
 fs.mkdirSync(PROOF_DIR, { recursive: true });
 
-const ALLOWED_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
-const upload = multer({
-  storage: multer.diskStorage({
-    destination: PROOF_DIR,
-    filename: (req, file, cb) => cb(null, `${crypto.randomBytes(16).toString("hex")}${path.extname(file.originalname).toLowerCase()}`),
-  }),
-  limits: { fileSize: 5 * 1024 * 1024 },
-  fileFilter: (req, file, cb) => {
-    if (!ALLOWED_TYPES.has(file.mimetype)) return cb(badRequest("Upload a JPEG, PNG or WEBP screenshot"));
-    cb(null, true);
-  },
-});
+const upload = createTempUpload({ maxBytes: UPLOAD_PROFILES.paymentProof.maxBytes });
 
 function removeFile(name) {
   if (name) fs.unlink(path.join(PROOF_DIR, name), () => {});
@@ -55,8 +52,34 @@ function canView(user, payment) {
   return user.role === "admin" && payment.university_id === user.university_id;
 }
 function canReview(user, payment) {
-  // The payee decides; an admin of the same university can override (e.g. payee unreachable).
-  return canView(user, payment) && payment.payer_id !== user.id;
+  if (!canView(user, payment)) return false;
+  if (payment.payer_id === user.id) return false;
+
+  // EVENT TICKETS: ONLY an authorized Gibiyachin admin can approve or reject!
+  // Students cannot approve, organizers cannot approve, merchants cannot approve.
+  if (payment.transaction_type === "ticket") {
+    if (user.role === "super_admin") return true;
+    return user.role === "admin" && payment.university_id === user.university_id;
+  }
+
+  // MATERIAL SALES (orders): Merchant confirms payment receipt; admins can also investigate/resolve
+  if (payment.transaction_type === "order") {
+    if (user.id === payment.payee_id) return true;
+    if (user.role === "super_admin") return true;
+    return user.role === "admin" && payment.university_id === user.university_id;
+  }
+
+  // RENTALS (bookings): Item owner confirms payment receipt; admins can investigate/resolve
+  if (payment.transaction_type === "booking") {
+    if (user.id === payment.payee_id) return true;
+    if (user.role === "super_admin") return true;
+    return user.role === "admin" && payment.university_id === user.university_id;
+  }
+
+  // Other (P2P): Seller confirms payment receipt
+  if (user.id === payment.payee_id) return true;
+  if (user.role === "super_admin") return true;
+  return user.role === "admin" && payment.university_id === user.university_id;
 }
 
 function publicPayment(p) {
@@ -195,10 +218,7 @@ router.get(
       [payment.id]
     );
     if (!rows[0]) throw notFound("No proof has been uploaded for this payment");
-    const file = path.join(PROOF_DIR, path.basename(rows[0].file_name));
-    if (!fs.existsSync(file)) throw notFound("Proof image is no longer available");
-    res.set("Cache-Control", "private, no-store");
-    res.sendFile(file);
+    if (!sendFileSafely(res, PROOF_DIR, rows[0].file_name)) throw notFound("Proof image is no longer available");
   })
 );
 
@@ -211,32 +231,48 @@ router.post(
   requireAuth(),
   upload.single("screenshot"),
   asyncHandler(async (req, res) => {
-    const fileName = req.file?.filename;
+    let proofResult = null;
     try {
       if (!req.file) throw badRequest("Attach a screenshot of your payment (field 'screenshot')");
       const parsed = proofBody.safeParse(req.body);
       if (!parsed.success) throw badRequest(parsed.error.issues.map((i) => i.message).join("; "), "VALIDATION_ERROR");
       const { referenceNumber } = parsed.data;
 
-      const sha = crypto.createHash("sha256").update(fs.readFileSync(req.file.path)).digest("hex");
+      try {
+        proofResult = await processUpload({
+          tempPath: req.file.path,
+          destDir: PROOF_DIR,
+          allowedTypes: UPLOAD_PROFILES.paymentProof.allowedTypes,
+          maxBytes: UPLOAD_PROFILES.paymentProof.maxBytes,
+        });
+      } catch (uploadErr) {
+        if (uploadErr.uploadError) throw badRequest(uploadErr.message);
+        throw uploadErr;
+      }
+
+      const sha = crypto.createHash("sha256").update(fs.readFileSync(path.join(PROOF_DIR, proofResult.filename))).digest("hex");
 
       const payment = await db.withTransaction(async (client) => {
         const { rows } = await client.query("SELECT * FROM payments WHERE id = $1 AND provider = 'manual' FOR UPDATE", [req.params.id]);
         const p = rows[0];
-        if (!p || p.payer_id !== req.user.id) throw notFound("Payment not found");
-        if (p.status === "under_review") throw conflict("Your proof is already waiting for the seller's approval", "ALREADY_UNDER_REVIEW");
-        if (p.status !== "pending") throw conflict(`This payment is already ${p.status}`, "PAYMENT_NOT_PENDING");
-        if (new Date(p.expires_at) < new Date()) {
+        if (!p) throw notFound("Payment not found");
+        const isPayer = p.payer_id === req.user.id;
+        const isPayee = p.payee_id === req.user.id;
+        const isAdminUser = ["admin", "super_admin"].includes(req.user.role) && (req.user.role === "super_admin" || p.university_id === req.user.university_id);
+        if (!isPayer && !isPayee && !isAdminUser) throw forbidden("Not authorized to submit proof for this payment");
+        if (p.status === "under_review" && isPayer) throw conflict("Your proof is already waiting for approval", "ALREADY_UNDER_REVIEW");
+        if (p.status !== "pending" && p.status !== "under_review") throw conflict(`This payment is already ${p.status}`, "PAYMENT_NOT_PENDING");
+        if (new Date(p.expires_at) < new Date() && isPayer) {
           throw conflict("The payment window has expired. Please place the order again.", "PAYMENT_EXPIRED");
         }
-        if (p.proof_attempts >= paymentsService.MANUAL_MAX_ATTEMPTS) {
+        if (p.proof_attempts >= paymentsService.MANUAL_MAX_ATTEMPTS && isPayer) {
           throw conflict("Too many rejected proofs for this payment.", "TOO_MANY_ATTEMPTS");
         }
 
         await client.query(
           `INSERT INTO payment_proofs (university_id, payment_id, payer_id, payee_id, file_name, image_sha256, reference_number)
            VALUES ($1,$2,$3,$4,$5,$6,$7)`,
-          [p.university_id, p.id, p.payer_id, p.payee_id, req.file.filename, sha, referenceNumber]
+          [p.university_id, p.id, p.payer_id, p.payee_id, proofResult.filename, sha, referenceNumber]
         );
         const upd = await client.query(
           "UPDATE payments SET status = 'under_review', proof_attempts = proof_attempts + 1 WHERE id = $1 RETURNING *",
@@ -248,15 +284,31 @@ router.post(
       await audit(req.user.id, "payment.proof_submitted", payment.transaction_type, payment.transaction_id, {
         paymentId: payment.id, referenceNumber,
       });
-      await notify(
-        payment.payee_id,
-        "payment_update",
-        "Payment proof to review",
-        `${req.user.name} says they paid ${Number(payment.amount).toFixed(2)} birr for ${payment.description || "an order"}. Check your account, then approve or reject.`
-      );
+
+      if (payment.transaction_type === "ticket") {
+        const { rows: admins } = await db.query(
+          "SELECT id FROM users WHERE role = 'admin' AND university_id = $1",
+          [payment.university_id]
+        );
+        for (const admin of admins) {
+          await notify(
+            admin.id,
+            "payment_update",
+            "Event ticket payment to review",
+            `${req.user.name} submitted payment proof for ${payment.description || "event ticket"}. Check receiving account and approve or reject.`
+          );
+        }
+      } else {
+        await notify(
+          payment.payee_id,
+          "payment_update",
+          "Payment proof to review",
+          `${req.user.name} says they paid ${Number(payment.amount).toFixed(2)} birr for ${payment.description || "an order"}. Check your account, then approve or reject.`
+        );
+      }
       res.status(201).json({ payment: publicPayment(payment) });
     } catch (err) {
-      removeFile(fileName);
+      if (proofResult?.filename) removeFile(proofResult.filename);
       if (err && err.code === "23505") {
         const reusedImage = String(err.constraint || "").includes("hash");
         return res.status(409).json({
@@ -269,6 +321,8 @@ router.post(
         });
       }
       throw err;
+    } finally {
+      await removeTempFile(req.file?.path);
     }
   })
 );
@@ -296,7 +350,14 @@ router.post(
 
 async function loadForReview(req) {
   const payment = await loadManualPayment(req.params.id);
-  if (!payment || !canReview(req.user, payment)) throw notFound("Payment not found");
+  if (!payment) throw notFound("Payment not found");
+
+  if (payment.transaction_type === "ticket" && !["admin", "super_admin"].includes(req.user.role)) {
+    throw forbidden("Only an authorized Gibiyachin administrator can approve or reject event ticket payments");
+  }
+
+  if (!canReview(req.user, payment)) throw forbidden("You are not authorized to review this payment");
+
   if (payment.status !== "under_review") {
     throw conflict(`This payment is ${payment.status}, there is nothing to review`, "NOT_UNDER_REVIEW");
   }

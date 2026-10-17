@@ -24,7 +24,9 @@ router.post(
       "INSERT INTO reports (reporter_id, target_type, target_id, reason, details) VALUES ($1,$2,$3,$4,$5) RETURNING *",
       [req.user.id, req.body.targetType, req.body.targetId, req.body.reason, req.body.details || null]
     );
-    const admins = await db.query("SELECT id FROM users WHERE role = 'admin'");
+    const admins = req.user.university_id
+      ? await db.query("SELECT id FROM users WHERE role = 'admin' AND university_id = $1", [req.user.university_id])
+      : { rows: [] };
     await Promise.all(admins.rows.map((a) => notify(a.id, "report", "New report filed", `${req.body.targetType}: ${req.body.reason}`)));
     res.status(201).json({ report: rows[0] });
   })

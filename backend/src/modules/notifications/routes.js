@@ -24,10 +24,11 @@ router.patch(
   "/:id/read",
   requireAuth(),
   asyncHandler(async (req, res) => {
-    const { rows } = await db.query("SELECT * FROM notifications WHERE id = $1", [req.params.id]);
+    const { rows } = await db.query(
+      "UPDATE notifications SET read_at = now() WHERE id = $1 AND user_id = $2 RETURNING id",
+      [req.params.id, req.user.id]
+    );
     if (!rows[0]) throw notFound("Notification not found");
-    if (rows[0].user_id !== req.user.id) throw forbidden();
-    await db.query("UPDATE notifications SET read_at = now() WHERE id = $1", [req.params.id]);
     res.json({ success: true });
   })
 );

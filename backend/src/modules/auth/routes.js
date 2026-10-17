@@ -9,6 +9,7 @@ const { validate } = require("../../middleware/validate");
 const { rateLimit } = require("../../middleware/rateLimit");
 const { asyncHandler, badRequest, unauthorized, forbidden, conflict } = require("../../utils/errors");
 const { audit } = require("../../utils/notify");
+const mailer = require("../../utils/mailer");
 const {
   issueSignupOtp,
   verifySignupOtp,
@@ -17,6 +18,106 @@ const {
 } = require("../../services/otp");
 
 const router = express.Router();
+
+const REFRESH_COOKIE_NAME = "ch_refresh";
+const CSRF_COOKIE_NAME = "ch_csrf";
+
+function getCookieOptions() {
+  const isProd = process.env.NODE_ENV === "production";
+  return {
+    httpOnly: true,
+    secure: isProd,
+    sameSite: isProd ? "lax" : "lax",
+    path: "/api/auth",
+    maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
+  };
+}
+
+function getClearCookieOptions() {
+  const isProd = process.env.NODE_ENV === "production";
+  return {
+    httpOnly: true,
+    secure: isProd,
+    sameSite: isProd ? "lax" : "lax",
+    path: "/api/auth",
+  };
+}
+
+function getCsrfCookieOptions() {
+  const isProd = process.env.NODE_ENV === "production";
+  return {
+    httpOnly: false, // Read by frontend JS to set X-CSRF-Token header
+    secure: isProd,
+    sameSite: isProd ? "lax" : "lax",
+    path: "/",
+    maxAge: 30 * 24 * 60 * 60 * 1000,
+  };
+}
+
+function getClearCsrfCookieOptions() {
+  const isProd = process.env.NODE_ENV === "production";
+  return {
+    httpOnly: false,
+    secure: isProd,
+    sameSite: isProd ? "lax" : "lax",
+    path: "/",
+  };
+}
+
+function generateCsrfToken() {
+  return crypto.randomBytes(24).toString("hex");
+}
+
+function verifyCsrf(req) {
+  const cookieToken = req.cookies?.[CSRF_COOKIE_NAME];
+  const headerToken = req.headers["x-csrf-token"];
+
+  if (!headerToken || !cookieToken) {
+    throw forbidden("CSRF token missing or invalid", "CSRF_DETECTED");
+  }
+
+  const bufHeader = Buffer.from(String(headerToken));
+  const bufCookie = Buffer.from(String(cookieToken));
+
+  if (bufHeader.length !== bufCookie.length || !crypto.timingSafeEqual(bufHeader, bufCookie)) {
+    throw forbidden("CSRF token mismatch", "CSRF_DETECTED");
+  }
+}
+
+function escapeHtml(s) {
+  return String(s || "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+async function sendPasswordResetEmail({ email, name, resetToken }) {
+  const appUrl = (process.env.APP_URL || process.env.FRONTEND_URL || "http://localhost:5173").replace(/\/+$/, "");
+  const resetLink = `${appUrl}/reset-password?token=${encodeURIComponent(resetToken)}`;
+  const subject = "Reset your Gibiyachin password";
+  const text = [
+    `Hi ${name || "there"},`,
+    ``,
+    `You requested to reset your Gibiyachin password. Click the link below to set a new password:`,
+    `${resetLink}`,
+    ``,
+    `This link expires in 1 hour and can only be used once. If you did not request this, you can safely ignore this email.`,
+  ].join("\n");
+
+  const html = `
+    <div style="font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;max-width:480px;margin:auto;padding:24px;border:1px solid #e2e8f0;border-radius:12px">
+      <h2 style="margin:0 0 8px;color:#0f172a">Reset your password</h2>
+      <p style="color:#475569;margin:0 0 20px">Hi ${escapeHtml(name || "there")}, click the button below to reset your Gibiyachin password.</p>
+      <div style="text-align:center;margin:24px 0">
+        <a href="${resetLink}" style="background:#1e3a8a;color:#ffffff;padding:12px 24px;text-decoration:none;border-radius:8px;font-weight:600;display:inline-block">Reset Password</a>
+      </div>
+      <p style="color:#64748b;font-size:13px;margin:20px 0 0">This link expires in 1 hour and can only be used once. If you did not request a password reset, you can safely ignore this email.</p>
+    </div>`;
+
+  try {
+    return await mailer.sendMail({ to: email, subject, text, html });
+  } catch (err) {
+    console.warn("[mailer] password reset email send failed:", err?.message);
+    return { delivered: false, error: err };
+  }
+}
 
 const registerSchema = z.object({
   name: z.string().min(2),
@@ -37,24 +138,54 @@ router.post(
     const existing = await db.query("SELECT id FROM users WHERE email = $1", [email.toLowerCase()]);
     if (existing.rows.length) throw conflict("An account with this email already exists", "EMAIL_TAKEN");
 
-    // Phase 3: every account belongs to exactly one active university. Use the
-    // explicit universityId, else match the email's domain to a university.
+    // Phase 3: every account belongs to exactly one active university.
+    // Check if email domain matches any university (primary domain or permitted_domains).
+    const emailDomain = email.toLowerCase().split("@")[1];
+    const domainMatch = await db.query(
+      `SELECT * FROM universities
+       WHERE lower(domain) = $1
+          OR EXISTS (
+            SELECT 1 FROM unnest(COALESCE(permitted_domains, ARRAY[]::text[])) AS pd
+            WHERE lower(pd) = $1
+          )`,
+      [emailDomain]
+    );
+    const domainUni = domainMatch.rows[0] || null;
+
     let uni = null;
-    if (universityId) {
-      uni = (await db.query("SELECT * FROM universities WHERE id = $1 AND status = 'active'", [universityId])).rows[0];
-      if (!uni) throw badRequest("Unknown or inactive university", "UNKNOWN_UNIVERSITY");
-    } else {
-      const emailDomain = email.toLowerCase().split("@")[1];
-      uni = (await db.query("SELECT * FROM universities WHERE lower(domain) = $1 AND status = 'active'", [emailDomain])).rows[0];
-      if (!uni) throw badRequest("Choose your university (universityId) — your email domain didn't match one", "UNIVERSITY_REQUIRED");
-    }
-    const uniId = uni.id;
     let verified = false;
     let verificationMethod = "manual_pending";
-    if (uni.domain && email.toLowerCase().endsWith("@" + uni.domain.toLowerCase())) {
+
+    if (domainUni) {
+      if (domainUni.status !== "active") {
+        const code = domainUni.status === "suspended" ? "TENANT_SUSPENDED" : domainUni.status === "archived" ? "TENANT_ARCHIVED" : "TENANT_INACTIVE";
+        throw forbidden(`Registration for this university is currently disabled (${domainUni.status})`, code);
+      }
+      if (universityId && universityId !== domainUni.id) {
+        throw badRequest("The provided universityId does not match your email domain's university", "UNIVERSITY_MISMATCH");
+      }
+      uni = domainUni;
       verified = true;
       verificationMethod = "domain";
+    } else {
+      if (!universityId) {
+        throw badRequest("Choose your university (universityId) — your email domain didn't match one", "UNIVERSITY_REQUIRED");
+      }
+      const { rows: selectedUnis } = await db.query("SELECT * FROM universities WHERE id = $1", [universityId]);
+      const selectedUni = selectedUnis[0];
+      if (!selectedUni) {
+        throw badRequest("Unknown university", "UNKNOWN_UNIVERSITY");
+      }
+      if (selectedUni.status !== "active") {
+        const code = selectedUni.status === "suspended" ? "TENANT_SUSPENDED" : selectedUni.status === "archived" ? "TENANT_ARCHIVED" : "TENANT_INACTIVE";
+        throw forbidden(`This university is currently ${selectedUni.status}. Registration is disabled.`, code);
+      }
+      uni = selectedUni;
+      verified = false;
+      verificationMethod = "manual_pending";
     }
+
+    const uniId = uni.id;
 
     const passwordHash = await hashPassword(password);
     const { rows } = await db.query(
@@ -102,12 +233,25 @@ router.post(
     const { email, password } = req.body;
     const { rows } = await db.query("SELECT * FROM users WHERE email = $1", [email.toLowerCase()]);
     const user = rows[0];
-    // Same generic error whether the email doesn't exist or the password is
-    // wrong — SRS FR-003 alternative flow: no hint about which field failed.
     if (!user || !(await comparePassword(password, user.password_hash))) {
       throw unauthorized("Invalid email or password");
     }
-    if (user.suspended) throw forbidden("This account has been suspended. Contact a university administrator.");
+    if (user.suspended) throw forbidden("This account has been suspended. Contact a university administrator.", "ACCOUNT_SUSPENDED");
+    if (!user.email_verified) {
+      throw forbidden("Please verify your email address before logging in.", "EMAIL_NOT_VERIFIED");
+    }
+
+    if (user.role !== "super_admin") {
+      if (!user.university_id) {
+        throw forbidden("Your account is not attached to a valid university.", "TENANT_INVALID");
+      }
+      const { rows: uniRows } = await db.query("SELECT id, status FROM universities WHERE id = $1", [user.university_id]);
+      const uni = uniRows[0];
+      if (!uni || uni.status !== "active") {
+        const code = uni?.status === "suspended" ? "TENANT_SUSPENDED" : uni?.status === "archived" ? "TENANT_ARCHIVED" : "TENANT_INACTIVE";
+        throw forbidden(`This university is ${uni?.status || "inactive"}. Access is disabled.`, code);
+      }
+    }
 
     const accessToken = signAccessToken(user);
     const refreshToken = generateRefreshToken();
@@ -118,8 +262,12 @@ router.post(
       [user.id, hashToken(refreshToken), familyId]
     );
 
+    res.cookie(REFRESH_COOKIE_NAME, refreshToken, getCookieOptions());
+    const csrfToken = generateCsrfToken();
+    res.cookie(CSRF_COOKIE_NAME, csrfToken, getCsrfCookieOptions());
+
     const { password_hash, ...safeUser } = user;
-    res.json({ accessToken, refreshToken, user: safeUser });
+    res.json({ accessToken, csrfToken, user: safeUser });
   })
 );
 
@@ -182,21 +330,61 @@ router.post(
 
 // FR-003 (session continuity) — exchange refresh token for a new access token,
 // rotating the refresh token and detecting reuse (SRS Section 15).
+// FR-003 (session continuity) — exchange refresh token for a new access token,
+// rotating the refresh token in an HttpOnly cookie and detecting reuse (SRS Section 15).
+const refreshSchema = z.object({
+  refreshToken: z.string().optional(),
+});
+
 router.post(
   "/refresh",
-  validate({ body: z.object({ refreshToken: z.string() }) }),
+  validate({ body: refreshSchema }),
   asyncHandler(async (req, res) => {
-    const { refreshToken } = req.body;
+    const isCookieAuth = Boolean(req.cookies?.[REFRESH_COOKIE_NAME]);
+    const refreshToken = req.cookies?.[REFRESH_COOKIE_NAME] || req.body?.refreshToken;
+
+    if (!refreshToken) {
+      throw unauthorized("Refresh token is required", "NO_REFRESH_TOKEN");
+    }
+
+    if (isCookieAuth) {
+      verifyCsrf(req);
+    }
+
     const tokenHash = hashToken(refreshToken);
     const { rows } = await db.query("SELECT * FROM refresh_tokens WHERE token_hash = $1", [tokenHash]);
     const stored = rows[0];
-    if (!stored || stored.expires_at < new Date()) throw unauthorized("Invalid or expired refresh token");
+    if (!stored || stored.expires_at < new Date()) {
+      res.clearCookie(REFRESH_COOKIE_NAME, getClearCookieOptions());
+      throw unauthorized("Invalid or expired refresh token");
+    }
 
     if (stored.revoked) {
       // Reuse of an already-rotated token: treat as possible theft and kill
       // the whole family.
       await db.query("UPDATE refresh_tokens SET revoked = true WHERE family_id = $1", [stored.family_id]);
+      res.clearCookie(REFRESH_COOKIE_NAME, getClearCookieOptions());
       throw unauthorized("Refresh token reuse detected — all sessions revoked. Please log in again.");
+    }
+
+    const { rows: userRows } = await db.query("SELECT * FROM users WHERE id = $1", [stored.user_id]);
+    const user = userRows[0];
+    if (!user) throw unauthorized("Account no longer exists");
+    if (user.suspended) throw forbidden("This account has been suspended. Contact a university administrator.", "ACCOUNT_SUSPENDED");
+    if (!user.email_verified) {
+      throw forbidden("Please verify your email address before continuing.", "EMAIL_NOT_VERIFIED");
+    }
+
+    if (user.role !== "super_admin") {
+      if (!user.university_id) {
+        throw forbidden("Your account is not attached to a valid university.", "TENANT_INVALID");
+      }
+      const { rows: uniRows } = await db.query("SELECT id, status FROM universities WHERE id = $1", [user.university_id]);
+      const uni = uniRows[0];
+      if (!uni || uni.status !== "active") {
+        const code = uni?.status === "suspended" ? "TENANT_SUSPENDED" : uni?.status === "archived" ? "TENANT_ARCHIVED" : "TENANT_INACTIVE";
+        throw forbidden(`This university is ${uni?.status || "inactive"}. Access is disabled.`, code);
+      }
     }
 
     await db.query("UPDATE refresh_tokens SET revoked = true WHERE id = $1", [stored.id]);
@@ -207,50 +395,70 @@ router.post(
       [stored.user_id, hashToken(newRefreshToken), stored.family_id]
     );
 
-    const { rows: userRows } = await db.query("SELECT * FROM users WHERE id = $1", [stored.user_id]);
-    const accessToken = signAccessToken(userRows[0]);
-    res.json({ accessToken, refreshToken: newRefreshToken });
+    res.cookie(REFRESH_COOKIE_NAME, newRefreshToken, getCookieOptions());
+    const newCsrfToken = generateCsrfToken();
+    res.cookie(CSRF_COOKIE_NAME, newCsrfToken, getCsrfCookieOptions());
+
+    const accessToken = signAccessToken(user);
+    res.json({ accessToken, csrfToken: newCsrfToken });
   })
 );
+
+const logoutSchema = z.object({
+  refreshToken: z.string().optional(),
+});
 
 router.post(
   "/logout",
-  validate({ body: z.object({ refreshToken: z.string() }) }),
+  validate({ body: logoutSchema }),
   asyncHandler(async (req, res) => {
-    await db.query("UPDATE refresh_tokens SET revoked = true WHERE token_hash = $1", [hashToken(req.body.refreshToken)]);
-    res.json({ success: true });
+    const isCookieAuth = Boolean(req.cookies?.[REFRESH_COOKIE_NAME]);
+    const refreshToken = req.cookies?.[REFRESH_COOKIE_NAME] || req.body?.refreshToken;
+
+    if (isCookieAuth) {
+      verifyCsrf(req);
+    }
+
+    if (refreshToken) {
+      await db.query("UPDATE refresh_tokens SET revoked = true WHERE token_hash = $1", [hashToken(refreshToken)]);
+    }
+
+    res.clearCookie(REFRESH_COOKIE_NAME, getClearCookieOptions());
+    res.clearCookie(CSRF_COOKIE_NAME, getClearCsrfCookieOptions());
+
+    res.json({ success: true, message: "Logged out successfully" });
   })
 );
 
-// FR-004 — forgot / reset password. No real email provider is wired up for
-// this local demo, so the reset link is returned in the response /
-// server log instead of being emailed — see README "Simplifications".
+// FR-004 — forgot / reset password with secure email delivery via existing mailer.
+// Generates a cryptographically random, short-lived (1h) token whose SHA-256 hash is
+// stored in the database. Raw tokens are never logged or returned in responses.
 router.post(
   "/forgot-password",
-  rateLimit({ windowMs: 60_000, max: 5 }),
+  rateLimit({ windowMs: 60_000, max: 5, keyFn: (req) => `forgotpw:${req.ip}:${req.body?.email}` }),
   validate({ body: z.object({ email: z.string().email() }) }),
   asyncHandler(async (req, res) => {
-    const { rows } = await db.query("SELECT id FROM users WHERE email = $1", [req.body.email.toLowerCase()]);
-    let devResetToken;
+    const email = req.body.email.toLowerCase();
+    const { rows } = await db.query("SELECT id, name, email FROM users WHERE email = $1", [email]);
     if (rows[0]) {
-      devResetToken = crypto.randomBytes(32).toString("hex");
+      const resetToken = crypto.randomBytes(32).toString("hex");
       await db.query(
         "UPDATE users SET password_reset_token=$1, password_reset_expires = now() + interval '1 hour' WHERE id=$2",
-        [hashToken(devResetToken), rows[0].id]
+        [hashToken(resetToken), rows[0].id]
       );
-      console.log(`[DEV EMAIL] Password reset token for ${req.body.email}: ${devResetToken}`);
+      await sendPasswordResetEmail({ email: rows[0].email, name: rows[0].name, resetToken });
     }
-    // Same response whether or not the account exists (SRS FR-004: no account enumeration).
+    // Same generic response whether or not the account exists (SRS FR-004: prevents account enumeration).
     res.json({
-      message: "If that email is registered, a reset link has been generated.",
-      devResetToken: process.env.NODE_ENV === "production" ? undefined : devResetToken,
+      message: "If that email is registered, a password reset link has been sent.",
     });
   })
 );
 
 router.post(
   "/reset-password",
-  validate({ body: z.object({ token: z.string(), newPassword: z.string().min(8) }) }),
+  rateLimit({ windowMs: 60_000, max: 10, keyFn: (req) => `resetpw:${req.ip}` }),
+  validate({ body: z.object({ token: z.string().min(1), newPassword: z.string().min(8) }) }),
   asyncHandler(async (req, res) => {
     const { token, newPassword } = req.body;
     const { rows } = await db.query(
@@ -263,8 +471,9 @@ router.post(
       "UPDATE users SET password_hash=$1, password_reset_token=NULL, password_reset_expires=NULL WHERE id=$2",
       [passwordHash, rows[0].id]
     );
+    // Invalidate existing sessions across all devices
     await db.query("UPDATE refresh_tokens SET revoked = true WHERE user_id = $1", [rows[0].id]);
-    res.json({ success: true });
+    res.json({ success: true, message: "Password updated successfully. Please log in with your new password." });
   })
 );
 

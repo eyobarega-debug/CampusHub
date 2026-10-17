@@ -7,11 +7,13 @@ class ApiError extends Error {
 }
 
 const badRequest = (msg, code) => new ApiError(400, msg, code || "BAD_REQUEST");
-const unauthorized = (msg = "Authentication required") => new ApiError(401, msg, "UNAUTHENTICATED");
-const forbidden = (msg = "You are not allowed to do this") => new ApiError(403, msg, "FORBIDDEN");
-const notFound = (msg = "Not found") => new ApiError(404, msg, "NOT_FOUND");
+const unauthorized = (msg = "Authentication required", code = "UNAUTHENTICATED") => new ApiError(401, msg, code);
+const forbidden = (msg = "You are not allowed to do this", code = "FORBIDDEN") => new ApiError(403, msg, code);
+const notFound = (msg = "Not found", code = "NOT_FOUND") => new ApiError(404, msg, code);
 const conflict = (msg, code) => new ApiError(409, msg, code || "CONFLICT");
 const tooMany = (msg, code) => new ApiError(429, msg, code || "TOO_MANY_REQUESTS");
+const badGateway = (msg = "Bad Gateway", code = "BAD_GATEWAY") => new ApiError(502, msg, code);
+const gatewayTimeout = (msg = "Gateway Timeout", code = "GATEWAY_TIMEOUT") => new ApiError(504, msg, code);
 
 // Wrap async route handlers so thrown/rejected errors reach the error middleware
 // instead of crashing the process or hanging the request.
@@ -30,4 +32,16 @@ function errorHandler(err, req, res, next) {
   return res.status(500).json({ error: { code: "INTERNAL", message: "Something went wrong." } });
 }
 
-module.exports = { ApiError, badRequest, unauthorized, forbidden, notFound, conflict, tooMany, asyncHandler, errorHandler };
+module.exports = {
+  ApiError,
+  badRequest,
+  unauthorized,
+  forbidden,
+  notFound,
+  conflict,
+  tooMany,
+  badGateway,
+  gatewayTimeout,
+  asyncHandler,
+  errorHandler,
+};

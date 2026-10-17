@@ -121,7 +121,7 @@ export default function ProfileHeader({
           />
         ) : (
           <div className="flex h-full w-full items-center justify-center opacity-30">
-            <span className="text-4xl font-black tracking-widest text-white">CAMPUSHUB</span>
+            <span className="text-4xl font-black tracking-widest text-white">GIBIYACHIN</span>
           </div>
         )}
 
@@ -223,7 +223,7 @@ export default function ProfileHeader({
                 )}
               </div>
               <p className="mt-0.5 text-xs text-slate">
-                {user.university_name || "CampusHub Community"}
+                {user.university_name || "ግቢያችን Community"}
                 {joinedDate && ` · Joined ${joinedDate}`}
               </p>
             </div>

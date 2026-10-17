@@ -15,12 +15,15 @@ const TABS = [
 const STATUS_TONE = { pending: "warn", under_review: "accent", confirmed: "ok", failed: "danger", refunded: "slate" };
 const STATUS_TEXT = { pending: "waiting for proof", under_review: "to review", confirmed: "approved", failed: "cancelled", refunded: "refunded" };
 
-function ReviewRow({ p, onDone, setError }) {
+function ReviewRow({ p, user, onDone, setError }) {
   const [showImg, setShowImg] = useState(false);
   const [rejecting, setRejecting] = useState(false);
   const [reason, setReason] = useState("");
   const [cancelPayment, setCancelPayment] = useState(false);
   const [busy, setBusy] = useState(false);
+
+  const isAdmin = ["admin", "super_admin"].includes(user?.role);
+  const isTicket = p.transactionType === "ticket";
 
   async function act(path, body) {
     setError("");
@@ -35,15 +38,44 @@ function ReviewRow({ p, onDone, setError }) {
     }
   }
 
+  if (isTicket && !isAdmin) {
+    return (
+      <div className="mt-3 border-t border-slate/15 pt-3">
+        <div className="rounded-lg bg-navy/5 p-3 text-xs text-navy space-y-1">
+          <p className="font-semibold">Event Ticket Payment — ግቢያችን Admin Approval Required</p>
+          <p>
+            Event ticket payments are received directly by ግቢያችን's designated admin account.
+            Only authorized administrators can verify and approve ticket payments. Once verified, the attendee receives their active ticket and QR code, and 97.5% net revenue is allocated to your organizer payout balance.
+          </p>
+          <p className="font-mono text-slate">Reference: {p.proof?.referenceNumber || "None submitted"}</p>
+        </div>
+        <div className="mt-2 flex gap-2">
+          <Button variant="outline" onClick={() => setShowImg((v) => !v)}>{showImg ? "Hide screenshot" : "View screenshot"}</Button>
+        </div>
+        {showImg && <div className="mt-3"><ProofImage paymentId={p.id} /></div>}
+      </div>
+    );
+  }
+
   return (
     <div className="mt-3 border-t border-slate/15 pt-3">
      <p className="text-sm text-slate">
         Reference <span className="font-mono text-navy">{p.proof?.referenceNumber}</span>. Check that{" "}
         <strong>{p.amount.toFixed(2)} birr</strong> actually arrived in your account before approving.
-        {p.commissionRate != null && (
-          <span className="block text-xs">
-            Approving adds a {Math.round(p.commissionRate * 100)}% CampusHub commission to your account
+        {isTicket && (
+          <span className="block text-xs text-accent-dark font-medium mt-0.5">
+            Admin verification: Approving issues the ticket QR code, retains 2.5% platform commission, and attributes 97.5% net payable to the event organizer.
+          </span>
+        )}
+        {!isTicket && p.commissionRate != null && p.commissionRate > 0 && (
+          <span className="block text-xs mt-0.5">
+            Approving adds a {Math.round(p.commissionRate * 100)}% platform commission to your account
             {p.transactionType === "booking" ? " (on the rental fee, deposit excluded)" : ""}.
+          </span>
+        )}
+        {!isTicket && p.commissionRate === 0 && (
+          <span className="block text-xs text-ok mt-0.5">
+            0% commission — 100% of the rental fee belongs to the lender.
           </span>
         )}
       </p>
@@ -171,7 +203,7 @@ export default function PaymentApprovals() {
                   </Button>
                 </div>
               )}
-              {tab !== "mine" && p.status === "under_review" && <ReviewRow p={p} onDone={done} setError={setError} />}
+              {tab !== "mine" && p.status === "under_review" && <ReviewRow p={p} user={user} onDone={done} setError={setError} />}
               {tab !== "mine" && p.status === "confirmed" && p.proof && (
                 <p className="mt-2 text-xs text-slate">Reference <span className="font-mono">{p.proof.referenceNumber}</span></p>
               )}

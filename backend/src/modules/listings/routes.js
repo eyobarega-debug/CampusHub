@@ -132,6 +132,7 @@ router.patch(
   asyncHandler(async (req, res) => {
     const { rows: existingRows } = await db.query("SELECT * FROM p2p_listings WHERE id = $1", [req.params.id]);
     if (!existingRows[0]) throw notFound("Listing not found");
+    assertSameTenant(req, existingRows[0].university_id, "Listing");
     if (existingRows[0].seller_id !== req.user.id) throw forbidden("You do not own this listing");
 
     const b = req.body;
@@ -174,6 +175,7 @@ router.get(
   asyncHandler(async (req, res) => {
     const { rows: listingRows } = await db.query("SELECT * FROM p2p_listings WHERE id = $1", [req.params.id]);
     if (!listingRows[0]) throw notFound("Listing not found");
+    assertSameTenant(req, listingRows[0].university_id, "Listing");
     if (listingRows[0].seller_id !== req.user.id) throw forbidden();
     const { rows } = await db.query(
       `SELECT r.*, u.name AS buyer_name FROM p2p_requests r JOIN users u ON u.id = r.buyer_id
@@ -191,6 +193,9 @@ router.get(
   "/:id/my-request",
   requireAuth(),
   asyncHandler(async (req, res) => {
+    const { rows: listingRows } = await db.query("SELECT university_id FROM p2p_listings WHERE id = $1", [req.params.id]);
+    if (!listingRows[0]) throw notFound("Listing not found");
+    assertSameTenant(req, listingRows[0].university_id, "Listing");
     const { rows } = await db.query(
       "SELECT * FROM p2p_requests WHERE listing_id = $1 AND buyer_id = $2 ORDER BY created_at DESC LIMIT 1",
       [req.params.id, req.user.id]
@@ -207,12 +212,13 @@ router.patch(
   validate({ body: z.object({ status: z.enum(["accepted", "declined"]) }) }),
   asyncHandler(async (req, res) => {
     const { rows } = await db.query(
-      `SELECT r.*, l.seller_id, l.title, l.price, l.status AS listing_status
+      `SELECT r.*, l.seller_id, l.title, l.price, l.status AS listing_status, l.university_id
        FROM p2p_requests r JOIN p2p_listings l ON l.id = r.listing_id WHERE r.id = $1`,
       [req.params.requestId]
     );
     const request = rows[0];
     if (!request) throw notFound("Request not found");
+    assertSameTenant(req, request.university_id, "Request");
     if (request.seller_id !== req.user.id) throw forbidden();
     if (request.status !== "pending") throw conflict("This request has already been decided");
 
@@ -250,6 +256,7 @@ router.post(
     const { rows } = await db.query("SELECT * FROM p2p_orders WHERE request_id = $1", [req.params.requestId]);
     const order = rows[0];
     if (!order) throw notFound("No payable order exists for this request yet — has the seller accepted it?");
+    assertSameTenant(req, order.university_id, "Order");
     if (order.buyer_id !== req.user.id) throw forbidden();
     if (order.status !== "pending_payment") throw conflict(`This order is already ${order.status}`);
 
@@ -271,6 +278,7 @@ router.get(
     const { rows } = await db.query("SELECT * FROM p2p_orders WHERE request_id = $1", [req.params.requestId]);
     const order = rows[0];
     if (!order) return res.json({ order: null });
+    assertSameTenant(req, order.university_id, "Order");
     if (![order.buyer_id, order.seller_id].includes(req.user.id)) throw forbidden();
     res.json({ order });
   })

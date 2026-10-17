@@ -1,34 +1,57 @@
-// Reference driver for Chapa (https://chapa.co), a widely-used Ethiopian
-// payment aggregator, demonstrating that a real provider slots into the
-// same interface as the mock driver with no changes to order/rental/ticket
-// business logic (SRS Section 16's entire point).
-//
-// ============================================================================
-// IMPORTANT — READ BEFORE ENABLING IN PRODUCTION
-// ============================================================================
-// This driver was written to match Chapa's publicly documented API shape
-// (POST /v1/transaction/initialize, GET /v1/transaction/verify/:tx_ref) but
-// has NOT been tested against the live Chapa API — this development
-// environment has no network access to chapa.co and no real Chapa
-// credentials. Treat this as a structurally-correct starting point, not a
-// verified integration. Before using it for real payments:
-//   1. Get real API credentials from https://dashboard.chapa.co
-//   2. Test /transaction/initialize against Chapa's sandbox mode first
-//   3. Confirm the webhook payload shape against Chapa's current docs —
-//      third-party API response shapes can drift from what's coded here
-//   4. Verify the signature-checking approach in handleWebhook() below
-//      matches whatever Chapa's webhook signing actually does at the time
-//      you implement this — it's stubbed here, not implemented, because it
-//      cannot be verified without a live account.
-// ============================================================================
+const crypto = require("crypto");
 
 const CHAPA_BASE = "https://api.chapa.co/v1";
 
+// For local testing without real internet connection or real Chapa API keys
+let mockVerifier = null;
+let mockInitiator = null;
+
 function isConfigured() {
-  return !!process.env.CHAPA_SECRET_KEY;
+  return !!process.env.CHAPA_SECRET_KEY || !!mockVerifier || !!mockInitiator;
+}
+
+function getSecretKey() {
+  return process.env.CHAPA_WEBHOOK_SECRET || process.env.CHAPA_SECRET_KEY || "";
+}
+
+/**
+ * Validates a Chapa webhook request signature using HMAC-SHA256.
+ * Chapa delivers the signature in lowercase hex format in the
+ * 'x-chapa-signature' or 'chapa-signature' header.
+ *
+ * @param {Buffer|string} rawBody - Raw request body buffer received by Express
+ * @param {string} signature - Value from x-chapa-signature / chapa-signature header
+ * @param {string} [secret] - Optional secret key override
+ * @returns {boolean}
+ */
+function verifyWebhookSignature(rawBody, signature, secret) {
+  const secretKey = secret || getSecretKey();
+  if (!signature || !secretKey || !rawBody) return false;
+
+  const bodyBuffer = Buffer.isBuffer(rawBody) ? rawBody : Buffer.from(rawBody, "utf8");
+  const computedHash = crypto.createHmac("sha256", secretKey).update(bodyBuffer).digest("hex");
+
+  const sigTrimmed = signature.trim().toLowerCase();
+  if (computedHash.length !== sigTrimmed.length) return false;
+
+  try {
+    return crypto.timingSafeEqual(Buffer.from(computedHash, "utf8"), Buffer.from(sigTrimmed, "utf8"));
+  } catch {
+    return false;
+  }
 }
 
 async function initiate(payment, { buyerEmail, callbackUrl, returnUrl }) {
+  const trimmedEmail = typeof buyerEmail === "string" ? buyerEmail.trim().toLowerCase() : "";
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  if (!trimmedEmail || !emailRegex.test(trimmedEmail)) {
+    throw new Error("Valid buyer email is required to initiate Chapa payment");
+  }
+
+  if (mockInitiator) {
+    return mockInitiator(payment, { buyerEmail: trimmedEmail, callbackUrl, returnUrl });
+  }
+
   if (!isConfigured()) {
     throw new Error("Chapa provider selected but CHAPA_SECRET_KEY is not set");
   }
@@ -40,8 +63,8 @@ async function initiate(payment, { buyerEmail, callbackUrl, returnUrl }) {
     },
     body: JSON.stringify({
       amount: String(payment.amount),
-      currency: "ETB",
-      email: buyerEmail || "student@example.com",
+      currency: payment.currency || "ETB",
+      email: trimmedEmail,
       tx_ref: payment.id,
       callback_url: callbackUrl,
       return_url: returnUrl,
@@ -58,14 +81,93 @@ async function initiate(payment, { buyerEmail, callbackUrl, returnUrl }) {
   return { checkoutUrl: data.data.checkout_url, providerRef: payment.id };
 }
 
+/**
+ * Calls Chapa's server-side Transaction Verification API to verify the
+ * status, amount, currency, and reference of a payment.
+ *
+ * GET https://api.chapa.co/v1/transaction/verify/:tx_ref
+ *
+ * @param {string} txRef - The unique transaction reference (payment.id)
+ * @returns {Promise<{success: boolean, amount: number|null, currency: string|null, txRef: string, reference: string|null, status: string, raw: object}>}
+ */
 async function verify(txRef) {
+  if (mockVerifier) {
+    return mockVerifier(txRef);
+  }
   if (!isConfigured()) throw new Error("Chapa provider not configured");
-  const res = await fetch(`${CHAPA_BASE}/transaction/verify/${txRef}`, {
-    headers: { Authorization: `Bearer ${process.env.CHAPA_SECRET_KEY}` },
-  });
-  if (!res.ok) throw new Error(`Chapa verify failed (${res.status})`);
+
+  let res;
+  try {
+    res = await fetch(`${CHAPA_BASE}/transaction/verify/${txRef}`, {
+      headers: { Authorization: `Bearer ${process.env.CHAPA_SECRET_KEY}` },
+      signal: AbortSignal.timeout(10_000),
+    });
+  } catch (err) {
+    const isTimeout = err.name === "TimeoutError" || err.code === "ETIMEDOUT";
+    const error = new Error(`Chapa verify request failed: ${err.message}`);
+    error.isUpstreamError = true;
+    error.status = isTimeout ? 504 : 502;
+    error.code = isTimeout ? "GATEWAY_TIMEOUT" : "BAD_GATEWAY";
+    throw error;
+  }
+
+  if (res.status >= 500 || res.status === 429) {
+    const errText = await res.text().catch(() => "");
+    const error = new Error(`Chapa verify upstream server error (${res.status}): ${errText}`);
+    error.isUpstreamError = true;
+    error.status = res.status === 429 ? 429 : 502;
+    error.code = res.status === 429 ? "RATE_LIMITED" : "BAD_GATEWAY";
+    throw error;
+  }
+
+  if (!res.ok) {
+    const errText = await res.text().catch(() => "");
+    const error = new Error(`Chapa verify failed (${res.status}): ${errText}`);
+    error.status = res.status;
+    error.code = "VERIFICATION_FAILED";
+    throw error;
+  }
+
   const data = await res.json();
-  return { success: data.status === "success" && data.data?.status === "success", raw: data };
+  const txData = data.data;
+  const isSuccess = data.status === "success" && txData?.status === "success";
+
+  return {
+    success: isSuccess,
+    amount: txData && txData.amount != null ? Number(txData.amount) : null,
+    currency: txData?.currency ? String(txData.currency).toUpperCase() : null,
+    txRef: txData?.merchant_reference || txData?.tx_ref || txRef,
+    reference: txData?.chapa_reference || txData?.reference || null,
+    status: txData?.status || (data.status === "success" ? "success" : "failed"),
+    raw: data,
+  };
 }
 
-module.exports = { name: "chapa", isConfigured, initiate, verify };
+function _setMockVerifier(fn) {
+  mockVerifier = fn;
+}
+
+function _clearMockVerifier() {
+  mockVerifier = null;
+}
+
+function _setMockInitiator(fn) {
+  mockInitiator = fn;
+}
+
+function _clearMockInitiator() {
+  mockInitiator = null;
+}
+
+module.exports = {
+  name: "chapa",
+  isConfigured,
+  initiate,
+  verify,
+  verifyWebhookSignature,
+  getSecretKey,
+  _setMockVerifier,
+  _clearMockVerifier,
+  _setMockInitiator,
+  _clearMockInitiator,
+};

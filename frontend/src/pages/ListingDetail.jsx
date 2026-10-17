@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams, Link } from "react-router-dom";
 import { client } from "../api/client";
 import { useAuth, errMsg } from "../context/AuthContext";
-import { Badge, Button, Card, ErrorBanner, PageHeader, Spinner, SuccessBanner, TextArea } from "../components/ui";
+import { Badge, Button, Card, EmptyState, ErrorBanner, PageHeader, Spinner, SuccessBanner, TextArea } from "../components/ui";
 import { PAYMENT_METHOD, startCheckout } from "../api/checkout";
 
 export default function ListingDetail() {
@@ -10,6 +10,8 @@ export default function ListingDetail() {
   const { user } = useAuth();
   const navigate = useNavigate();
   const [listing, setListing] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
   const [requests, setRequests] = useState(null);
   const [myRequest, setMyRequest] = useState(null);
   const [message, setMessage] = useState("");
@@ -19,8 +21,20 @@ export default function ListingDetail() {
   const isOwner = user && listing && user.id === listing.seller_id;
 
   async function load() {
-    const { data } = await client.get(`/listings/${id}`);
-    setListing(data.listing);
+    setLoading(true);
+    setLoadError("");
+    try {
+      const { data } = await client.get(`/listings/${id}`);
+      setListing(data.listing);
+    } catch (err) {
+      if (err?.response?.status === 404) {
+        setLoadError("This item was not found or is not available at your campus.");
+      } else {
+        setLoadError(errMsg(err, "Could not load this listing."));
+      }
+    } finally {
+      setLoading(false);
+    }
   }
   useEffect(() => {
     load();
@@ -68,7 +82,22 @@ export default function ListingDetail() {
     }
   }
 
-  if (!listing) return <div className="flex justify-center py-16"><Spinner /></div>;
+  if (loading) return <div className="flex justify-center py-16"><Spinner /></div>;
+  if (loadError || !listing) {
+    return (
+      <div className="mx-auto max-w-lg py-12 text-center">
+        <EmptyState
+          title="Listing Unavailable"
+          subtitle={loadError || "This item was not found or is not available at your campus."}
+          action={
+            <Button as={Link} to="/listings" variant="primary" className="mt-4">
+              Back to P2P Listings
+            </Button>
+          }
+        />
+      </div>
+    );
+  }
 
   return (
     <div className="mx-auto max-w-2xl">

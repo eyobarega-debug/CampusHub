@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useState } from "react";
 import { client } from "../api/client";
-import { errMsg } from "../context/AuthContext";
+import { useAuth, errMsg } from "../context/AuthContext";
 import { Badge, Button, Card, EmptyState, ErrorBanner, PageHeader, Spinner, SuccessBanner } from "../components/ui";
-import { LedgerTable, SummaryCards, birr } from "./Commissions";
+import { LedgerTable, SummaryCards } from "./Commissions";
 
+const birr = (n) => `${Number(n).toFixed(2)} birr`;
 const ROLE_LABEL = { merchant: "Merchant", organizer: "Event organizer", student: "Student (rentals / P2P)" };
 
 // The admin's ledger for ONE seller: their own sales, what they owe, and the settle buttons.
@@ -70,6 +71,7 @@ function SellerLedger({ seller, onChanged, setError, setSuccess }) {
 }
 
 export default function AdminCommissions() {
+  const { user } = useAuth();
   const [sellers, setSellers] = useState(null);
   const [open, setOpen] = useState(null);
   const [error, setError] = useState("");
@@ -90,11 +92,15 @@ export default function AdminCommissions() {
 
   const totalDue = (sellers || []).reduce((t, s) => t + s.commissionDue, 0);
 
+  const subtitle = user?.university_name
+    ? `Managing seller commissions for ${user.university_name} — Open one to see their sales and mark commission as paid.`
+    : "Every merchant, event organizer and renting student has their own account. Open one to see their sales and mark commission as paid.";
+
   return (
     <div>
       <PageHeader
         title="Seller commissions"
-        subtitle="Every merchant, event organizer and renting student has their own account. Open one to see their sales and mark commission as paid."
+        subtitle={subtitle}
       />
       <ErrorBanner message={error} />
       <SuccessBanner message={success} />

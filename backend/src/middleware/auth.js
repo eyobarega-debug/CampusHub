@@ -1,10 +1,14 @@
 const { verifyAccessToken } = require("../utils/jwt");
-const { unauthorized, forbidden } = require("../utils/errors");
+const { unauthorized, forbidden, notFound } = require("../utils/errors");
 const db = require("../db");
 
-// Verifies the JWT and attaches { id, role, universityId } to req.user.
-// Also re-checks suspended status against the DB so a suspension takes
-// effect immediately rather than only after the access token expires.
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// Verifies the JWT and attaches { id, role, university_id, universityId } to req.user.
+// Enforces suspended user status, unverified email status, and suspended/archived
+// university status against the database immediately.
+// Establishes trusted req.tenant context from authoritative DB record and rejects
+// any forged client tenant headers/parameters.
 function requireAuth() {
   return async (req, res, next) => {
     try {
@@ -14,13 +18,74 @@ function requireAuth() {
       const payload = verifyAccessToken(token);
 
       const { rows } = await db.query(
-        "SELECT id, role, suspended, university_id, verified, name, email FROM users WHERE id = $1",
+        `SELECT u.id, u.role, u.suspended, u.university_id, u.verified, u.name, u.email, u.email_verified,
+                uni.id AS uni_id, uni.name AS uni_name, uni.slug AS uni_slug, uni.domain AS uni_domain,
+                uni.status AS uni_status, uni.feature_flags AS uni_feature_flags, uni.isolation_mode AS uni_isolation_mode
+         FROM users u
+         LEFT JOIN universities uni ON uni.id = u.university_id
+         WHERE u.id = $1`,
         [payload.sub]
       );
       const user = rows[0];
       if (!user) throw unauthorized("Account no longer exists");
-      if (user.suspended) throw forbidden("This account has been suspended");
+      if (user.suspended) throw forbidden("This account has been suspended", "ACCOUNT_SUSPENDED");
+      if (user.email_verified === false) throw forbidden("Please verify your email address", "EMAIL_NOT_VERIFIED");
 
+      const requested = req.headers?.["x-university-id"] || req.headers?.["x-university-slug"] || req.query?.universityId || null;
+
+      if (user.role === "super_admin") {
+        user.universityId = user.university_id;
+        req.user = user;
+        if (!req.tenant) {
+          if (requested) {
+            const col = UUID_RE.test(requested) ? "id" : "slug";
+            const uniRes = await db.query(
+              `SELECT id, name, slug, domain, status, feature_flags, isolation_mode FROM universities WHERE ${col} = $1`,
+              [requested]
+            );
+            const university = uniRes.rows[0];
+            if (!university) throw notFound("University not found");
+            req.tenant = { universityId: university.id, isSuper: true, university };
+          } else {
+            req.tenant = { universityId: null, isSuper: true, university: null };
+          }
+        }
+        return next();
+      }
+
+      // Non-superadmin: enforce tenant association and active status
+      if (!user.university_id || !user.uni_id) {
+        throw forbidden("Your account is not attached to a valid university", "TENANT_INVALID");
+      }
+
+      if (user.uni_status !== "active") {
+        const code = user.uni_status === "suspended" ? "TENANT_SUSPENDED" : user.uni_status === "archived" ? "TENANT_ARCHIVED" : "TENANT_INACTIVE";
+        throw forbidden(`This university is ${user.uni_status}. Access is disabled.`, code);
+      }
+
+      // Reject tenant header spoofing
+      if (requested && requested !== user.university_id && requested !== user.uni_slug) {
+        throw forbidden("You cannot access another university's data", "TENANT_MISMATCH");
+      }
+
+      // Always establish trusted req.tenant
+      if (!req.tenant) {
+        req.tenant = {
+          universityId: user.university_id,
+          isSuper: false,
+          university: {
+            id: user.uni_id,
+            name: user.uni_name,
+            slug: user.uni_slug,
+            domain: user.uni_domain,
+            status: user.uni_status,
+            feature_flags: user.uni_feature_flags,
+            isolation_mode: user.uni_isolation_mode,
+          },
+        };
+      }
+
+      user.universityId = user.university_id;
       req.user = user;
       next();
     } catch (err) {
@@ -50,8 +115,43 @@ function optionalAuth() {
     if (scheme !== "Bearer" || !token) return next();
     try {
       const payload = verifyAccessToken(token);
-      const { rows } = await db.query("SELECT id, role, suspended, university_id FROM users WHERE id = $1", [payload.sub]);
-      if (rows[0] && !rows[0].suspended) req.user = rows[0];
+      const { rows } = await db.query(
+        `SELECT u.id, u.role, u.suspended, u.university_id, u.verified, u.name, u.email, u.email_verified,
+                uni.id AS uni_id, uni.name AS uni_name, uni.slug AS uni_slug, uni.domain AS uni_domain,
+                uni.status AS uni_status, uni.feature_flags AS uni_feature_flags, uni.isolation_mode AS uni_isolation_mode
+         FROM users u
+         LEFT JOIN universities uni ON uni.id = u.university_id
+         WHERE u.id = $1`,
+        [payload.sub]
+      );
+      const user = rows[0];
+      if (user && !user.suspended && user.email_verified !== false) {
+        if (user.role === "super_admin") {
+          user.universityId = user.university_id;
+          req.user = user;
+          if (!req.tenant) {
+            req.tenant = { universityId: null, isSuper: true, university: null };
+          }
+        } else if (user.uni_id && user.uni_status === "active") {
+          user.universityId = user.university_id;
+          req.user = user;
+          if (!req.tenant) {
+            req.tenant = {
+              universityId: user.university_id,
+              isSuper: false,
+              university: {
+                id: user.uni_id,
+                name: user.uni_name,
+                slug: user.uni_slug,
+                domain: user.uni_domain,
+                status: user.uni_status,
+                feature_flags: user.uni_feature_flags,
+                isolation_mode: user.uni_isolation_mode,
+              },
+            };
+          }
+        }
+      }
     } catch (_) {
       // ignore invalid token on optional-auth routes
     }
