@@ -6,7 +6,7 @@ const { requireAuth, requireRole } = require("../../middleware/auth");
 const { validate } = require("../../middleware/validate");
 const { asyncHandler, notFound, forbidden, conflict } = require("../../utils/errors");
 const payments = require("../../services/payments");
-const { signTicket } = require("../../utils/qr");
+const { signTicket, generateTicketNumber } = require("../../utils/qr");
 
 const { assertSameTenant } = require("../../middleware/tenant");
 const router = express.Router();
@@ -37,8 +37,40 @@ router.post(
       ]);
       const tt = ttRows[0];
       if (!tt) throw notFound("Ticket type not found");
+      if (tt.is_active === false) {
+        throw conflict("This ticket type is currently inactive", "TICKET_TYPE_INACTIVE");
+      }
+      if (tt.sales_start_at && new Date(tt.sales_start_at) > new Date()) {
+        throw conflict("Ticket sales for this type have not started yet", "SALES_NOT_STARTED");
+      }
+      if (tt.sales_end_at && new Date(tt.sales_end_at) < new Date()) {
+        throw conflict("Ticket sales for this type have ended", "SALES_ENDED");
+      }
       if (tt.quantity_sold >= tt.quantity_total) {
         throw conflict("This ticket type is sold out", "SOLD_OUT");
+      }
+
+      if (tt.purchase_limit != null && tt.purchase_limit > 0) {
+        const { rows: userTickets } = await client.query(
+          "SELECT COUNT(*) AS user_count FROM tickets WHERE ticket_type_id = $1 AND holder_id = $2 AND status IN ('active', 'reserved')",
+          [tt.id, req.user.id]
+        );
+        if (Number(userTickets[0]?.user_count || 0) >= tt.purchase_limit) {
+          throw conflict(
+            `You have reached the maximum purchase limit of ${tt.purchase_limit} ticket(s) for this tier`,
+            "PURCHASE_LIMIT_EXCEEDED"
+          );
+        }
+      }
+
+      if (event.capacity != null) {
+        const { rows: soldRows } = await client.query(
+          "SELECT COUNT(*) AS total_active FROM tickets WHERE event_id = $1 AND status IN ('active', 'reserved')",
+          [event.id]
+        );
+        if (Number(soldRows[0]?.total_active || 0) >= event.capacity) {
+          throw conflict("This event has reached maximum capacity", "EVENT_CAPACITY_REACHED");
+        }
       }
 
       const isFree = Number(tt.price) === 0;
@@ -55,12 +87,13 @@ router.post(
 
         const ticketId = crypto.randomUUID();
         const signature = signTicket(ticketId);
+        const ticketNumber = generateTicketNumber();
 
         await client.query("UPDATE ticket_types SET quantity_sold = quantity_sold + 1 WHERE id = $1", [tt.id]);
         const { rows } = await client.query(
-          `INSERT INTO tickets (id, event_id, ticket_type_id, holder_id, qr_token_hash, status)
-           VALUES ($1, $2, $3, $4, $5, 'active') RETURNING *`,
-          [ticketId, event.id, tt.id, req.user.id, signature]
+          `INSERT INTO tickets (id, event_id, ticket_type_id, holder_id, qr_token_hash, status, ticket_number)
+           VALUES ($1, $2, $3, $4, $5, 'active', $6) RETURNING *`,
+          [ticketId, event.id, tt.id, req.user.id, signature, ticketNumber]
         );
         await client.query("INSERT INTO notifications (user_id, type, title, body) VALUES ($1,'ticket_update',$2,$3)", [
           req.user.id,
@@ -70,11 +103,12 @@ router.post(
         return { ticket: rows[0], isFree: true, payment: null };
       }
 
+      const ticketNumber = generateTicketNumber();
       await client.query("UPDATE ticket_types SET quantity_sold = quantity_sold + 1 WHERE id = $1", [tt.id]);
       const { rows } = await client.query(
-        `INSERT INTO tickets (event_id, ticket_type_id, holder_id, qr_token_hash, status)
-                 VALUES ($1,$2,$3,'PENDING-' || gen_random_uuid()::text,'reserved') RETURNING *`,
-        [event.id, tt.id, req.user.id]
+        `INSERT INTO tickets (event_id, ticket_type_id, holder_id, qr_token_hash, status, ticket_number)
+         VALUES ($1,$2,$3,'PENDING-' || gen_random_uuid()::text,'reserved', $4) RETURNING *`,
+        [event.id, tt.id, req.user.id, ticketNumber]
       );
       return { ticket: rows[0], isFree: false, price: tt.price };
     });

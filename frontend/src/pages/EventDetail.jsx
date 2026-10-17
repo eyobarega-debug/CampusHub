@@ -83,21 +83,60 @@ export default function EventDetail() {
 
   return (
     <div className="mx-auto max-w-2xl">
-      <PageHeader title={event.title} subtitle={`${event.club_name} · ${new Date(event.date_time).toLocaleString()} · ${event.location}`} />
-      <Card className="p-6">
-        <ErrorBanner message={error} />
-        <SuccessBanner message={success} />
-        <p className="text-sm text-slate">{event.description}</p>
+      <PageHeader
+        title={event.title}
+        subtitle={`${event.organizer_name || event.club_name} · ${new Date(event.date_time).toLocaleString()} · ${event.venue_name || event.location}`}
+      />
+      <Card className="overflow-hidden">
+        {event.poster_url && (
+          <div className="h-64 w-full overflow-hidden bg-navy/10">
+            <img src={event.poster_url} alt={event.title} className="h-full w-full object-cover" />
+          </div>
+        )}
 
-        <div className="mt-6 space-y-3">
-          {ticketTypes.map((tt) => {
-            const soldOut = tt.quantity_sold >= tt.quantity_total;
-            return (
-              <div key={tt.id} className="flex items-center justify-between rounded-lg border border-slate/15 p-4">
-                <div>
-                  <p className="font-medium text-navy">{tt.name}</p>
-                  <p className="text-sm text-slate">{Number(tt.price).toFixed(2)} birr · {tt.quantity_total - tt.quantity_sold} left</p>
-                </div>
+        <div className="p-6">
+          <ErrorBanner message={error} />
+          <SuccessBanner message={success} />
+
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-2 border-b border-slate/15 pb-3">
+            <div>
+              <span className="text-xs font-semibold text-slate uppercase">Organizer:</span>{" "}
+              <span className="text-xs font-bold text-navy">{event.organizer_name || event.club_name}</span>
+              {event.contact_info && <p className="text-xs text-slate">Contact: {event.contact_info}</p>}
+            </div>
+            {event.category && (
+              <span className="rounded-full bg-accent/10 px-3 py-1 text-xs font-semibold text-accent-dark">
+                {event.category}
+              </span>
+            )}
+          </div>
+
+          <div className="mb-4 rounded-xl bg-paper p-3 text-xs text-slate">
+            <p className="font-semibold text-navy">📍 Venue & Location:</p>
+            <p className="font-medium text-navy">{event.venue_name || event.location}</p>
+            {event.venue_address && <p>{event.venue_address}</p>}
+            {event.end_time && (
+              <p className="mt-1">
+                ⏱️ Ends at: {new Date(event.end_time).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+              </p>
+            )}
+          </div>
+
+          <p className="text-sm text-slate">{event.description}</p>
+
+          <div className="mt-6 space-y-3">
+            <h3 className="font-semibold text-navy">Available Ticket Tiers</h3>
+            {ticketTypes.map((tt) => {
+              const soldOut = tt.quantity_sold >= tt.quantity_total;
+              return (
+                <div key={tt.id} className="flex items-center justify-between rounded-lg border border-slate/15 p-4">
+                  <div>
+                    <p className="font-medium text-navy">{tt.name}</p>
+                    {tt.description && <p className="text-xs text-slate">{tt.description}</p>}
+                    <p className="text-xs font-semibold text-accent-dark">
+                      {Number(tt.price) > 0 ? `${Number(tt.price).toFixed(2)} ETB` : "FREE ADMISSION"} · {tt.quantity_total - tt.quantity_sold} left
+                    </p>
+                  </div>
                 {soldOut ? (
                   user?.role === "student" ? (
                     waitlisted[tt.id] ? (
@@ -118,6 +157,7 @@ export default function EventDetail() {
               </div>
             );
           })}
+        </div>
         </div>
       </Card>
     </div>

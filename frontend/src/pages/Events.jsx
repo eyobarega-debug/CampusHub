@@ -32,14 +32,24 @@ export default function Events() {
         <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {events.map((e) => (
             <Link key={e.id} to={`/events/${e.id}`}>
-              <Card className="h-full p-4 transition hover:shadow-md">
-                <p className="text-xs font-medium uppercase tracking-wide text-accent-dark">{e.club_name}</p>
-                <p className="mt-1 font-semibold text-navy">{e.title}</p>
-                <p className="mt-1 text-sm text-slate">{new Date(e.date_time).toLocaleString()}</p>
-                <p className="text-sm text-slate">{e.location}</p>
-                <p className="mt-2 text-xs text-slate">
-                  {e.capacity_sold}/{e.capacity_total} tickets sold
-                </p>
+              <Card className="h-full overflow-hidden transition hover:shadow-md">
+                {e.poster_url && (
+                  <div className="h-36 w-full overflow-hidden bg-navy/10">
+                    <img src={e.poster_url} alt={e.title} className="h-full w-full object-cover transition hover:scale-105" />
+                  </div>
+                )}
+                <div className="p-4">
+                  <div className="flex items-center justify-between gap-1">
+                    <p className="text-xs font-medium uppercase tracking-wide text-accent-dark">{e.organizer_name || e.club_name}</p>
+                    {e.category && <span className="rounded-full bg-slate/10 px-2 py-0.5 text-[10px] text-slate">{e.category}</span>}
+                  </div>
+                  <p className="mt-1 font-semibold text-navy">{e.title}</p>
+                  <p className="mt-1 text-sm text-slate">{new Date(e.date_time).toLocaleString()}</p>
+                  <p className="text-sm text-slate">{e.venue_name || e.location}</p>
+                  <p className="mt-2 text-xs text-slate">
+                    {e.capacity_sold}/{e.capacity_total} tickets sold
+                  </p>
+                </div>
               </Card>
             </Link>
           ))}
