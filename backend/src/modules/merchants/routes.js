@@ -35,7 +35,9 @@ router.post(
       [req.user.id, req.body.businessName, req.body.category || null, req.body.contactInfo || null, req.body.documentUrls || []]
     );
 
-    const admins = await db.query("SELECT id FROM users WHERE role = 'admin'");
+    const admins = req.user.university_id
+      ? await db.query("SELECT id FROM users WHERE role = 'admin' AND university_id = $1", [req.user.university_id])
+      : { rows: [] };
     await Promise.all(
       admins.rows.map((a) => notify(a.id, "merchant_application", "New merchant application", `${req.body.businessName} applied to sell on CampusHub.`))
     );
@@ -180,7 +182,8 @@ router.get(
     const { rows: storeRows } = await db.query("SELECT * FROM stores WHERE id = $1", [req.params.storeId]);
     const store = storeRows[0];
     if (!store) throw notFound("Store not found");
-    if (req.user.role !== "admin" && store.merchant_id !== req.user.id) throw forbidden();
+    assertSameTenant(req, store.university_id, "Store");
+    if (!["admin", "super_admin"].includes(req.user.role) && store.merchant_id !== req.user.id) throw forbidden();
 
     const totals = await db.query(
       `SELECT COUNT(*) FILTER (WHERE status <> 'cancelled') AS order_count,

@@ -134,11 +134,14 @@ router.post(
     ]);
     const event = rows[0];
     if (!event) throw notFound("Event not found");
+    assertSameTenant(req, event.university_id, "Event");
     if (event.lead_user_id !== req.user.id) throw forbidden();
     if (event.status !== "draft") throw conflict("Only draft events can be submitted for review");
 
     const { rows: updated } = await db.query("UPDATE events SET status='pending_review' WHERE id=$1 RETURNING *", [event.id]);
-    const admins = await db.query("SELECT id FROM users WHERE role='admin'");
+    const admins = req.user.university_id
+      ? await db.query("SELECT id FROM users WHERE role='admin' AND university_id = $1", [req.user.university_id])
+      : { rows: [] };
     await Promise.all(admins.rows.map((a) => notify(a.id, "event_review", "New event pending review", event.title)));
     res.json({ event: updated[0] });
   })
@@ -163,10 +166,11 @@ router.patch(
     ]);
     const event = rows[0];
     if (!event) throw notFound("Event not found");
+    assertSameTenant(req, event.university_id, "Event");
     const isOwner = req.user.role === "organizer" && event.lead_user_id === req.user.id;
-    if (!isOwner && req.user.role !== "admin") throw forbidden();
+    if (!isOwner && !["admin", "super_admin"].includes(req.user.role)) throw forbidden();
 
-    if (req.body.status === "published" && event.status !== "approved" && req.user.role !== "admin") {
+    if (req.body.status === "published" && event.status !== "approved" && !["admin", "super_admin"].includes(req.user.role)) {
       throw conflict("Event must be approved by an administrator before publishing", "NOT_APPROVED");
     }
     if (["completed"].includes(event.status)) throw conflict("Event already took place");
@@ -205,7 +209,7 @@ router.patch(
 router.patch(
   "/:id/admin-decision",
   requireAuth(),
-  requireRole("admin"),
+  requireRole("admin", "super_admin"),
   validate({ body: z.object({ decision: z.enum(["approve", "reject"]), reason: z.string().optional() }) }),
   asyncHandler(async (req, res) => {
     const { rows } = await db.query("SELECT e.*, c.lead_user_id FROM events e JOIN clubs c ON c.id=e.club_id WHERE e.id=$1", [
@@ -213,6 +217,7 @@ router.patch(
     ]);
     const event = rows[0];
     if (!event) throw notFound("Event not found");
+    assertSameTenant(req, event.university_id, "Event");
     if (event.status !== "pending_review") throw conflict("Event is not pending review");
 
     const status = req.body.decision === "approve" ? "approved" : "draft";
@@ -242,7 +247,8 @@ router.get(
     ]);
     const event = rows[0];
     if (!event) throw notFound("Event not found");
-    if (req.user.role !== "admin" && event.lead_user_id !== req.user.id) throw forbidden();
+    assertSameTenant(req, event.university_id, "Event");
+    if (!["admin", "super_admin"].includes(req.user.role) && event.lead_user_id !== req.user.id) throw forbidden();
 
     const attendees = await db.query(
       `SELECT t.id, t.status, t.used_at, u.name AS holder_name, u.email AS holder_email, tt.name AS ticket_type
@@ -322,6 +328,9 @@ router.post(
 router.get(
   "/:id/occurrences",
   asyncHandler(async (req, res) => {
+    const { rows: parentRows } = await db.query("SELECT university_id FROM events WHERE id = $1", [req.params.id]);
+    if (!parentRows[0]) throw notFound("Event not found");
+    assertSameTenant(req, parentRows[0].university_id, "Event");
     const conditions = ["parent_event_id = $1"];
     const params = [req.params.id];
     scopeTo(req, "university_id", conditions, params);

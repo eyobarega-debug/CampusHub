@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams, Link } from "react-router-dom";
 import { client } from "../api/client";
 import { useAuth, errMsg } from "../context/AuthContext";
-import { Button, Card, ErrorBanner, Input, PageHeader, Spinner } from "../components/ui";
+import { Button, Card, EmptyState, ErrorBanner, Input, PageHeader, Spinner } from "../components/ui";
 import { PAYMENT_METHOD, startCheckout } from "../api/checkout";
 
 export default function RentalDetail() {
@@ -10,12 +10,37 @@ export default function RentalDetail() {
   const { user } = useAuth();
   const navigate = useNavigate();
   const [item, setItem] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
   const [dates, setDates] = useState({ startDate: "", endDate: "" });
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    client.get(`/rentals/${id}`).then(({ data }) => setItem(data.item));
+    let cancelled = false;
+    setLoading(true);
+    setLoadError("");
+    client
+      .get(`/rentals/${id}`)
+      .then(({ data }) => {
+        if (!cancelled) setItem(data.item);
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          if (err?.response?.status === 404) {
+            setLoadError("This item was not found or is not available at your campus.");
+          } else {
+            setLoadError(errMsg(err, "Could not load this rental item."));
+          }
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
   }, [id]);
 
   const days =
@@ -29,7 +54,7 @@ export default function RentalDetail() {
     setError("");
     setBusy(true);
     try {
-  const { data } = await client.post(`/rentals/${id}/bookings`, { ...dates, paymentMethod: PAYMENT_METHOD });
+      const { data } = await client.post(`/rentals/${id}/bookings`, { ...dates, paymentMethod: PAYMENT_METHOD });
       startCheckout(navigate, data.payment, { returnTo: "/rentals/mine", label: `Rental: ${item.title}` });
     } catch (err) {
       setError(errMsg(err, "Could not book this item"));
@@ -38,7 +63,22 @@ export default function RentalDetail() {
     }
   }
 
-  if (!item) return <div className="flex justify-center py-16"><Spinner /></div>;
+  if (loading) return <div className="flex justify-center py-16"><Spinner /></div>;
+  if (loadError || !item) {
+    return (
+      <div className="mx-auto max-w-lg py-12 text-center">
+        <EmptyState
+          title="Rental Unavailable"
+          subtitle={loadError || "This item was not found or is not available at your campus."}
+          action={
+            <Button as={Link} to="/rentals" variant="primary" className="mt-4">
+              Back to Rentals
+            </Button>
+          }
+        />
+      </div>
+    );
+  }
 
   return (
     <div className="mx-auto max-w-2xl">

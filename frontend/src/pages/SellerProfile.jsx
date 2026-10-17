@@ -4,7 +4,7 @@ import { client } from "../api/client";
 import { useAuth, errMsg } from "../context/AuthContext";
 import ImageUploader from "../components/ImageUploader";
 import ReviewsPanel from "../components/ReviewsPanel";
-import { Badge, Button, Card, ErrorBanner, Input, Spinner, SuccessBanner, TextArea } from "../components/ui";
+import { Badge, Button, Card, EmptyState, ErrorBanner, Input, Spinner, SuccessBanner, TextArea } from "../components/ui";
 
 const VERIFY_TONE = { verified: "ok", pending: "warn", unverified: "slate", suspended: "danger" };
 
@@ -31,7 +31,11 @@ export default function SellerProfile() {
       const res = await client.get(`/sellers/${id}`);
       setData(res.data);
     } catch (err) {
-      setError(errMsg(err, "Could not load this seller"));
+      if (err?.response?.status === 404) {
+        setError("This seller was not found or is not available at your campus.");
+      } else {
+        setError(errMsg(err, "Could not load this seller"));
+      }
     }
   }
 
@@ -51,7 +55,21 @@ export default function SellerProfile() {
     }
   }
 
-  if (error && !data) return <ErrorBanner message={error} />;
+  if (error && !data) {
+    return (
+      <div className="mx-auto max-w-lg py-12 text-center">
+        <EmptyState
+          title="Seller Unavailable"
+          subtitle={error}
+          action={
+            <Button as={Link} to="/marketplace" variant="primary" className="mt-4">
+              Back to Marketplace
+            </Button>
+          }
+        />
+      </div>
+    );
+  }
   if (!data) return <div className="flex justify-center py-16"><Spinner /></div>;
 
   const { seller, listings, listingsTotal, isOwner } = data;

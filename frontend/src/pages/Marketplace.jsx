@@ -1,10 +1,12 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { client } from "../api/client";
+import { useAuth } from "../context/AuthContext";
 import { Badge, Card, EmptyState, Input, Select, Spinner } from "../components/ui";
 
 export default function Marketplace() {
   const navigate = useNavigate();
+  const { user } = useAuth();
   const [searchParams] = useSearchParams();
   const storeId = searchParams.get("store") || "";
   const [products, setProducts] = useState(null);
@@ -30,7 +32,14 @@ export default function Marketplace() {
       <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold text-navy">Marketplace</h1>
-          <p className="mt-1 text-sm text-slate">Browse products and services from verified campus merchants.</p>
+          <p className="mt-1 text-sm text-slate">
+            Browse products and services from verified campus merchants.
+            {user?.university_name && (
+              <span className="block mt-0.5 text-xs font-medium text-accent-dark">
+                📍 Viewing items at {user.university_name}
+              </span>
+            )}
+          </p>
         </div>
         <div className="flex gap-2">
           <Select value={category} onChange={(e) => setCategory(e.target.value)} className="w-40">

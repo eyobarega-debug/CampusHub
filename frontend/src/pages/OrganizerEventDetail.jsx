@@ -8,6 +8,7 @@ const RESULT_STYLE = {
   ADMIT: { tone: "ok", label: "✅ ADMIT" },
   ALREADY_USED: { tone: "danger", label: "⛔ ALREADY USED" },
   INVALID: { tone: "danger", label: "⛔ INVALID" },
+  FORBIDDEN_CROSS_CAMPUS: { tone: "danger", label: "⛔ CROSS-CAMPUS TICKET" },
 };
 
 export default function OrganizerEventDetail() {
@@ -67,7 +68,18 @@ export default function OrganizerEventDetail() {
       setScanResult(data);
       load();
     } catch (err) {
-      setError(err?.response?.data?.error?.message || "Verification request failed");
+      const code = err?.response?.data?.error?.code;
+      const msg = err?.response?.data?.error?.message;
+      if (code === "FORBIDDEN_CROSS_CAMPUS" || (err?.response?.status === 403 && msg?.toLowerCase().includes("another university"))) {
+        const crossCampusMsg = "This ticket belongs to another university and cannot be verified here.";
+        setError(crossCampusMsg);
+        setScanResult({
+          result: "FORBIDDEN_CROSS_CAMPUS",
+          reason: crossCampusMsg,
+        });
+      } else {
+        setError(msg || "Verification request failed");
+      }
     }
   }
 

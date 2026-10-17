@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams, Link } from "react-router-dom";
 import { client } from "../api/client";
 import { useAuth, errMsg } from "../context/AuthContext";
-import { Badge, Button, Card, ErrorBanner, PageHeader, Spinner, SuccessBanner } from "../components/ui";
+import { Badge, Button, Card, EmptyState, ErrorBanner, PageHeader, Spinner, SuccessBanner } from "../components/ui";
 import { PAYMENT_METHOD, startCheckout } from "../api/checkout";
 
 export default function EventDetail() {
@@ -10,6 +10,8 @@ export default function EventDetail() {
   const { user } = useAuth();
   const navigate = useNavigate();
   const [event, setEvent] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
   const [ticketTypes, setTicketTypes] = useState([]);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
@@ -17,9 +19,21 @@ export default function EventDetail() {
   const [waitlisted, setWaitlisted] = useState({});
 
   async function load() {
-    const { data } = await client.get(`/events/${id}`);
-    setEvent(data.event);
-    setTicketTypes(data.ticketTypes);
+    setLoading(true);
+    setLoadError("");
+    try {
+      const { data } = await client.get(`/events/${id}`);
+      setEvent(data.event);
+      setTicketTypes(data.ticketTypes);
+    } catch (err) {
+      if (err?.response?.status === 404) {
+        setLoadError("This event was not found or is not available at your campus.");
+      } else {
+        setLoadError(errMsg(err, "Could not load this event."));
+      }
+    } finally {
+      setLoading(false);
+    }
   }
   useEffect(() => {
     load();
@@ -50,7 +64,22 @@ export default function EventDetail() {
     }
   }
 
-  if (!event) return <div className="flex justify-center py-16"><Spinner /></div>;
+  if (loading) return <div className="flex justify-center py-16"><Spinner /></div>;
+  if (loadError || !event) {
+    return (
+      <div className="mx-auto max-w-lg py-12 text-center">
+        <EmptyState
+          title="Event Unavailable"
+          subtitle={loadError || "This event was not found or is not available at your campus."}
+          action={
+            <Button as={Link} to="/events" variant="primary" className="mt-4">
+              Back to Events
+            </Button>
+          }
+        />
+      </div>
+    );
+  }
 
   return (
     <div className="mx-auto max-w-2xl">

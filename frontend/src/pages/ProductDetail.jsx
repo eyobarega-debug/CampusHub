@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useNavigate, useParams, Link } from "react-router-dom";
 import { client } from "../api/client";
 import { useAuth, errMsg } from "../context/AuthContext";
-import { Badge, Button, Card, ErrorBanner, PageHeader, Spinner } from "../components/ui";
+import { Badge, Button, Card, EmptyState, ErrorBanner, PageHeader, Spinner } from "../components/ui";
 import ReviewsPanel from "../components/ReviewsPanel";
 import { PAYMENT_METHOD, startCheckout } from "../api/checkout";
 
@@ -11,13 +11,38 @@ export default function ProductDetail() {
   const { user } = useAuth();
   const navigate = useNavigate();
   const [product, setProduct] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
   const [qty, setQty] = useState(1);
   const [favorited, setFavorited] = useState(false);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    client.get(`/products/${id}`).then(({ data }) => setProduct(data.product));
+    let cancelled = false;
+    setLoading(true);
+    setLoadError("");
+    client
+      .get(`/products/${id}`)
+      .then(({ data }) => {
+        if (!cancelled) setProduct(data.product);
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          if (err?.response?.status === 404) {
+            setLoadError("This item was not found or is not available at your campus.");
+          } else {
+            setLoadError(errMsg(err, "Could not load this product."));
+          }
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
   }, [id]);
 
   async function buyNow() {
@@ -47,7 +72,22 @@ export default function ProductDetail() {
     }
   }
 
-  if (!product) return <div className="flex justify-center py-16"><Spinner /></div>;
+  if (loading) return <div className="flex justify-center py-16"><Spinner /></div>;
+  if (loadError || !product) {
+    return (
+      <div className="mx-auto max-w-lg py-12 text-center">
+        <EmptyState
+          title="Product Unavailable"
+          subtitle={loadError || "This item was not found or is not available at your campus."}
+          action={
+            <Button as={Link} to="/marketplace" variant="primary" className="mt-4">
+              Back to Marketplace
+            </Button>
+          }
+        />
+      </div>
+    );
+  }
 
   return (
     <div className="mx-auto max-w-4xl">

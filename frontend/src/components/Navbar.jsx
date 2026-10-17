@@ -53,6 +53,23 @@ export default function Navbar() {
         <div className="flex items-center gap-3">
           {user ? (
             <>
+              {user.university_name && (
+                <span
+                  className="hidden md:inline-flex items-center gap-1.5 rounded-full bg-white/10 px-2.5 py-1 text-xs font-medium text-white/90 border border-white/15 max-w-[200px]"
+                  title={`Active Campus: ${user.university_name}`}
+                >
+                  <span className="h-1.5 w-1.5 rounded-full bg-ok shrink-0" />
+                  <span className="truncate">{user.university_name}</span>
+                </span>
+              )}
+              {user.role === "super_admin" && (
+                <span
+                  className="hidden md:inline-flex items-center gap-1.5 rounded-full bg-amber-500/20 px-2.5 py-1 text-xs font-medium text-amber-200 border border-amber-500/30"
+                  title="Platform Super Administrator"
+                >
+                  <span>🌐 Platform Admin</span>
+                </span>
+              )}
               <NavLink to="/notifications" className="relative text-white/80 hover:text-white" title="Notifications">
                 🔔
                 {unread > 0 && (

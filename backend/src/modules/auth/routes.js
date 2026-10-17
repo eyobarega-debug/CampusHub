@@ -138,24 +138,54 @@ router.post(
     const existing = await db.query("SELECT id FROM users WHERE email = $1", [email.toLowerCase()]);
     if (existing.rows.length) throw conflict("An account with this email already exists", "EMAIL_TAKEN");
 
-    // Phase 3: every account belongs to exactly one active university. Use the
-    // explicit universityId, else match the email's domain to a university.
+    // Phase 3: every account belongs to exactly one active university.
+    // Check if email domain matches any university (primary domain or permitted_domains).
+    const emailDomain = email.toLowerCase().split("@")[1];
+    const domainMatch = await db.query(
+      `SELECT * FROM universities
+       WHERE lower(domain) = $1
+          OR EXISTS (
+            SELECT 1 FROM unnest(COALESCE(permitted_domains, ARRAY[]::text[])) AS pd
+            WHERE lower(pd) = $1
+          )`,
+      [emailDomain]
+    );
+    const domainUni = domainMatch.rows[0] || null;
+
     let uni = null;
-    if (universityId) {
-      uni = (await db.query("SELECT * FROM universities WHERE id = $1 AND status = 'active'", [universityId])).rows[0];
-      if (!uni) throw badRequest("Unknown or inactive university", "UNKNOWN_UNIVERSITY");
-    } else {
-      const emailDomain = email.toLowerCase().split("@")[1];
-      uni = (await db.query("SELECT * FROM universities WHERE lower(domain) = $1 AND status = 'active'", [emailDomain])).rows[0];
-      if (!uni) throw badRequest("Choose your university (universityId) — your email domain didn't match one", "UNIVERSITY_REQUIRED");
-    }
-    const uniId = uni.id;
     let verified = false;
     let verificationMethod = "manual_pending";
-    if (uni.domain && email.toLowerCase().endsWith("@" + uni.domain.toLowerCase())) {
+
+    if (domainUni) {
+      if (domainUni.status !== "active") {
+        const code = domainUni.status === "suspended" ? "TENANT_SUSPENDED" : domainUni.status === "archived" ? "TENANT_ARCHIVED" : "TENANT_INACTIVE";
+        throw forbidden(`Registration for this university is currently disabled (${domainUni.status})`, code);
+      }
+      if (universityId && universityId !== domainUni.id) {
+        throw badRequest("The provided universityId does not match your email domain's university", "UNIVERSITY_MISMATCH");
+      }
+      uni = domainUni;
       verified = true;
       verificationMethod = "domain";
+    } else {
+      if (!universityId) {
+        throw badRequest("Choose your university (universityId) — your email domain didn't match one", "UNIVERSITY_REQUIRED");
+      }
+      const { rows: selectedUnis } = await db.query("SELECT * FROM universities WHERE id = $1", [universityId]);
+      const selectedUni = selectedUnis[0];
+      if (!selectedUni) {
+        throw badRequest("Unknown university", "UNKNOWN_UNIVERSITY");
+      }
+      if (selectedUni.status !== "active") {
+        const code = selectedUni.status === "suspended" ? "TENANT_SUSPENDED" : selectedUni.status === "archived" ? "TENANT_ARCHIVED" : "TENANT_INACTIVE";
+        throw forbidden(`This university is currently ${selectedUni.status}. Registration is disabled.`, code);
+      }
+      uni = selectedUni;
+      verified = false;
+      verificationMethod = "manual_pending";
     }
+
+    const uniId = uni.id;
 
     const passwordHash = await hashPassword(password);
     const { rows } = await db.query(
@@ -209,6 +239,18 @@ router.post(
     if (user.suspended) throw forbidden("This account has been suspended. Contact a university administrator.", "ACCOUNT_SUSPENDED");
     if (!user.email_verified) {
       throw forbidden("Please verify your email address before logging in.", "EMAIL_NOT_VERIFIED");
+    }
+
+    if (user.role !== "super_admin") {
+      if (!user.university_id) {
+        throw forbidden("Your account is not attached to a valid university.", "TENANT_INVALID");
+      }
+      const { rows: uniRows } = await db.query("SELECT id, status FROM universities WHERE id = $1", [user.university_id]);
+      const uni = uniRows[0];
+      if (!uni || uni.status !== "active") {
+        const code = uni?.status === "suspended" ? "TENANT_SUSPENDED" : uni?.status === "archived" ? "TENANT_ARCHIVED" : "TENANT_INACTIVE";
+        throw forbidden(`This university is ${uni?.status || "inactive"}. Access is disabled.`, code);
+      }
     }
 
     const accessToken = signAccessToken(user);
@@ -331,6 +373,18 @@ router.post(
     if (user.suspended) throw forbidden("This account has been suspended. Contact a university administrator.", "ACCOUNT_SUSPENDED");
     if (!user.email_verified) {
       throw forbidden("Please verify your email address before continuing.", "EMAIL_NOT_VERIFIED");
+    }
+
+    if (user.role !== "super_admin") {
+      if (!user.university_id) {
+        throw forbidden("Your account is not attached to a valid university.", "TENANT_INVALID");
+      }
+      const { rows: uniRows } = await db.query("SELECT id, status FROM universities WHERE id = $1", [user.university_id]);
+      const uni = uniRows[0];
+      if (!uni || uni.status !== "active") {
+        const code = uni?.status === "suspended" ? "TENANT_SUSPENDED" : uni?.status === "archived" ? "TENANT_ARCHIVED" : "TENANT_INACTIVE";
+        throw forbidden(`This university is ${uni?.status || "inactive"}. Access is disabled.`, code);
+      }
     }
 
     await db.query("UPDATE refresh_tokens SET revoked = true WHERE id = $1", [stored.id]);

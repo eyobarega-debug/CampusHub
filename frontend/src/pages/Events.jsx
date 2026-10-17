@@ -1,9 +1,11 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { client } from "../api/client";
+import { useAuth } from "../context/AuthContext";
 import { Card, EmptyState, Spinner } from "../components/ui";
 
 export default function Events() {
+  const { user } = useAuth();
   const [events, setEvents] = useState(null);
 
   useEffect(() => {
@@ -15,7 +17,14 @@ export default function Events() {
   return (
     <div>
       <h1 className="text-2xl font-bold text-navy">Campus Events</h1>
-      <p className="mt-1 text-sm text-slate">Approved, published events open for ticket sales.</p>
+      <p className="mt-1 text-sm text-slate">
+        Approved, published events open for ticket sales.
+        {user?.university_name && (
+          <span className="block mt-0.5 text-xs font-medium text-accent-dark">
+            📍 Viewing events at {user.university_name}
+          </span>
+        )}
+      </p>
 
       {events.length === 0 ? (
         <EmptyState title="No published events right now" className="mt-6" />

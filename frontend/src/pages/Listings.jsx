@@ -29,7 +29,14 @@ export default function Listings() {
       <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold text-navy">Student Marketplace (P2P)</h1>
-          <p className="mt-1 text-sm text-slate">Items students are selling directly to other students.</p>
+          <p className="mt-1 text-sm text-slate">
+            Items students are selling directly to other students.
+            {user?.university_name && (
+              <span className="block mt-0.5 text-xs font-medium text-accent-dark">
+                📍 Viewing listings at {user.university_name}
+              </span>
+            )}
+          </p>
         </div>
         <div className="flex gap-2">
           <Select value={category} onChange={(e) => setCategory(e.target.value)} className="w-36">

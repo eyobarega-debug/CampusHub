@@ -29,7 +29,14 @@ export default function Rentals() {
       <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold text-navy">Borrow &amp; Rent</h1>
-          <p className="mt-1 text-sm text-slate">Books, calculators, projectors, and more — borrowed from fellow students.</p>
+          <p className="mt-1 text-sm text-slate">
+            Books, calculators, projectors, and more — borrowed from fellow students.
+            {user?.university_name && (
+              <span className="block mt-0.5 text-xs font-medium text-accent-dark">
+                📍 Viewing rental items at {user.university_name}
+              </span>
+            )}
+          </p>
         </div>
         <div className="flex flex-wrap gap-2">
           <Select value={category} onChange={(e) => setCategory(e.target.value)} className="w-36">

@@ -1,16 +1,52 @@
 import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import { client } from "../api/client";
-import { errMsg } from "../context/AuthContext";
+import { useAuth, errMsg } from "../context/AuthContext";
 import { Badge, Button, Card, ErrorBanner, Input, PageHeader, Select, Spinner, SuccessBanner, TextArea } from "../components/ui";
 import VerificationDocument from "../components/VerificationDocument";
 
 const TABS = ["Merchants", "Events", "Reports & Disputes", "Users", "Clubs", "Verifications", "Analytics", "Audit Log"];
 
 export default function Admin() {
+  const { user } = useAuth();
   const [tab, setTab] = useState("Merchants");
+
+  if (user?.role === "super_admin") {
+    return (
+      <div className="mx-auto max-w-2xl py-8">
+        <PageHeader
+          title="Platform Administration"
+          subtitle="Super Administrator System Oversight"
+        />
+        <Card className="p-8 text-center space-y-4">
+          <div className="text-4xl">🌐</div>
+          <h2 className="text-xl font-bold text-navy">Platform Superadmin Overview</h2>
+          <p className="text-sm text-slate max-w-md mx-auto">
+            You are logged in as a platform-level Super Administrator. Campus-specific administrative consoles (merchants, events, clubs, verifications, and disputes) are scoped to individual universities and require a campus administrator account.
+          </p>
+          <div className="rounded-lg bg-navy/5 p-4 text-xs text-slate max-w-md mx-auto space-y-1 text-left">
+            <p className="font-semibold text-navy">Platform Superadmin Controls:</p>
+            <p>• Multi-campus university management via <code className="bg-white px-1 py-0.5 rounded border border-slate/20">/api/super/universities</code></p>
+            <p>• Global platform metrics via <code className="bg-white px-1 py-0.5 rounded border border-slate/20">/api/super/stats</code></p>
+            <p>• Platform-wide audit trails via <code className="bg-white px-1 py-0.5 rounded border border-slate/20">/api/super/audit-logs</code></p>
+          </div>
+          <div className="pt-2">
+            <Button as={Link} to="/marketplace" variant="primary">
+              Return to Marketplace
+            </Button>
+          </div>
+        </Card>
+      </div>
+    );
+  }
+
+  const campusSubtitle = user?.university_name
+    ? `Managing ${user.university_name} — Approvals, moderation, and campus oversight.`
+    : "Approvals, moderation, and platform oversight.";
+
   return (
     <div>
-      <PageHeader title="University Administration" subtitle="Approvals, moderation, and platform oversight." />
+      <PageHeader title="University Administration" subtitle={campusSubtitle} />
       <div className="mb-6 flex flex-wrap gap-1 border-b border-slate/15">
         {TABS.map((t) => (
           <button

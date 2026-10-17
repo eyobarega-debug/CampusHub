@@ -14,9 +14,21 @@ router.get(
   requireAuth(),
   asyncHandler(async (req, res) => {
     const { rows } = await db.query("SELECT * FROM payments WHERE id = $1", [req.params.id]);
-    if (!rows[0]) throw notFound("Payment not found");
-    assertSameTenant(req, rows[0].university_id, "Payment");
-    res.json({ payment: rows[0] });
+    const payment = rows[0];
+    if (!payment) throw notFound("Payment not found");
+    assertSameTenant(req, payment.university_id, "Payment");
+
+    const isPlatformAdmin = req.user.role === "super_admin";
+    const isCampusAdmin = req.user.role === "admin";
+    if (!isPlatformAdmin && !isCampusAdmin) {
+      const isPayer = payment.payer_id === req.user.id || (await verifyOwnership(payment, req.user.id).catch(() => false));
+      const isPayee = payment.payee_id === req.user.id;
+      if (!isPayer && !isPayee) {
+        throw notFound("Payment not found");
+      }
+    }
+
+    res.json({ payment });
   })
 );
 
@@ -93,7 +105,7 @@ async function verifyOwnership(payment, userId) {
 router.post(
   "/:id/refund",
   requireAuth(),
-  requireRole("admin"),
+  requireRole("admin", "super_admin"),
   validate({ body: z.object({ amount: z.number().nonnegative().optional(), reason: z.string().optional() }) }),
   asyncHandler(async (req, res) => {
         const { rows } = await db.query("SELECT university_id FROM payments WHERE id = $1", [req.params.id]);

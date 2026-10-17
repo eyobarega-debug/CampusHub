@@ -146,6 +146,7 @@ router.patch(
   asyncHandler(async (req, res) => {
     const { rows: existingRows } = await db.query("SELECT * FROM rental_items WHERE id = $1", [req.params.id]);
     if (!existingRows[0]) throw notFound("Rental item not found");
+    assertSameTenant(req, existingRows[0].university_id, "Rental item");
     if (existingRows[0].owner_id !== req.user.id) throw forbidden();
 
     if (req.body.availableFrom || req.body.availableTo) {
@@ -234,8 +235,9 @@ router.get(
   asyncHandler(async (req, res) => {
     const { rows } = await db.query(
       `SELECT b.*, ri.title, ri.owner_id FROM rental_bookings b JOIN rental_items ri ON ri.id = b.rental_item_id
-       WHERE b.borrower_id = $1 OR ri.owner_id = $1 ORDER BY b.created_at DESC`,
-      [req.user.id]
+       WHERE (b.borrower_id = $1 OR ri.owner_id = $1) AND ($2::uuid IS NULL OR b.university_id = $2)
+       ORDER BY b.created_at DESC`,
+      [req.user.id, req.user.role === "super_admin" ? null : req.user.university_id]
     );
     // FR-021 — surface overdue status computed at read time
     const now = new Date();
@@ -255,6 +257,7 @@ router.post(
   asyncHandler(async (req, res) => {
     const booking = await loadBookingWithItem(req.params.id);
     if (!booking) throw notFound("Booking not found");
+    assertSameTenant(req, booking.university_id, "Rental booking");
     if (![booking.owner_id, booking.borrower_id].includes(req.user.id)) throw forbidden();
     if (booking.status !== "confirmed_awaiting_pickup") throw conflict("Booking is not awaiting pickup");
 
@@ -275,6 +278,7 @@ router.post(
   asyncHandler(async (req, res) => {
     const booking = await loadBookingWithItem(req.params.id);
     if (!booking) throw notFound("Booking not found");
+    assertSameTenant(req, booking.university_id, "Rental booking");
     if (booking.owner_id !== req.user.id) throw forbidden("Only the lender confirms a return");
     if (!["active"].includes(booking.status) && new Date(booking.end_date) >= new Date()) {
       throw conflict("Booking is not active");
@@ -317,6 +321,7 @@ router.post(
   asyncHandler(async (req, res) => {
     const booking = await loadBookingWithItem(req.params.id);
     if (!booking) throw notFound("Booking not found");
+    assertSameTenant(req, booking.university_id, "Rental booking");
     if (![booking.owner_id, booking.borrower_id].includes(req.user.id)) throw forbidden();
 
     const { rows } = await db.query(

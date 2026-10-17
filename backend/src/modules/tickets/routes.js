@@ -122,6 +122,10 @@ async function verifyOneTicket(qrToken, expectedTicketId, scannerUser) {
   if (scannerUser.role === "organizer") {
     const club = await db.query("SELECT id FROM clubs WHERE id = $1 AND lead_user_id = $2", [ticket.club_id, scannerUser.id]);
     if (!club.rows[0]) throw forbidden("You are not authorized to scan tickets for this event");
+  } else if (scannerUser.role === "admin") {
+    if (ticket.university_id !== scannerUser.university_id) {
+      throw forbidden("You are not authorized to scan tickets for another university");
+    }
   }
 
   if (ticket.status === "used") {
@@ -153,7 +157,7 @@ async function verifyOneTicket(qrToken, expectedTicketId, scannerUser) {
 router.post(
   "/:id/verify",
   requireAuth(),
-  requireRole("organizer", "admin"),
+  requireRole("organizer", "admin", "super_admin"),
   rateLimit({ windowMs: 60_000, max: 120, keyFn: (req) => `verify:${req.user.id}` }),
   validate({ body: z.object({ qrToken: z.string() }) }),
   asyncHandler(async (req, res) => {
@@ -178,7 +182,7 @@ router.post(
 router.post(
   "/verify-batch",
   requireAuth(),
-  requireRole("organizer", "admin"),
+  requireRole("organizer", "admin", "super_admin"),
   rateLimit({ windowMs: 60_000, max: 20, keyFn: (req) => `verify-batch:${req.user.id}` }),
   validate({
     body: z.object({

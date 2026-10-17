@@ -109,10 +109,15 @@ router.get(
   requireAdmin,
   validate({ query: listQuery }),
   asyncHandler(async (req, res) => {
+    const sellerQuery = req.user.role === "super_admin"
+      ? "SELECT id, name, email, role FROM users WHERE id = $1"
+      : "SELECT id, name, email, role FROM users WHERE id = $1 AND university_id = $2";
+    const sellerParams = req.user.role === "super_admin" ? [req.params.userId] : [req.params.userId, req.user.university_id];
+    const { rows: seller } = await db.query(sellerQuery, sellerParams);
+    if (!seller[0]) throw notFound("Seller not found");
+
     const params = [req.params.userId];
     const sc = scope(req.user, params);
-    const { rows: seller } = await db.query("SELECT id, name, email, role FROM users WHERE id = $1", [req.params.userId]);
-    if (!seller[0]) throw notFound("Seller not found");
     const { rows: s } = await db.query(`SELECT ${SUMMARY_SQL} FROM commissions c WHERE c.payee_id = $1 ${sc}`, params);
     let statusSql = "";
     if (req.query.status !== "all") {

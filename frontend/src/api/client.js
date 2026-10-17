@@ -79,6 +79,22 @@ client.interceptors.response.use(
   async (error) => {
     const original = error.config;
     const status = error.response?.status;
+    const errorCode = error.response?.data?.error?.code;
+
+    // Invalidate session immediately if tenant is suspended, archived, or invalid
+    const TENANT_SESSION_CODES = ["TENANT_SUSPENDED", "TENANT_ARCHIVED", "TENANT_INVALID"];
+    if (status === 403 && TENANT_SESSION_CODES.includes(errorCode)) {
+      setAccessToken(null);
+      window.dispatchEvent(
+        new CustomEvent("ch:logout", {
+          detail: {
+            code: errorCode,
+            message: error.response?.data?.error?.message || "Your university access has been disabled.",
+          },
+        })
+      );
+      return Promise.reject(error);
+    }
 
     if (status === 401 && !original._retry && !original.url.includes("/auth/")) {
       original._retry = true;
