@@ -258,11 +258,19 @@ before(async () => {
     [bookingA.id, studentA2User.id, uniA.id]
   );
   paymentA = payARes.rows[0];
+
+  // Official CampusHub receiving account for Uni A (required for ticket checkout)
+  await db.query(
+    `INSERT INTO payout_accounts (university_id, owner_id, method, account_name, account_number, is_default, is_campus_hub, active)
+     VALUES ($1, $2, 'telebirr', 'CampusHub Uni A Official', '0911223344', true, true, true)`,
+    [uniA.id, adminAUser.id]
+  );
 });
 
 after(async () => {
   if (server) await new Promise((resolve) => server.close(resolve));
   for (const unid of cleanupUniIds) {
+    await db.query("DELETE FROM payout_accounts WHERE university_id = $1", [unid]).catch(() => {});
     await db.query("DELETE FROM payments WHERE university_id = $1", [unid]).catch(() => {});
     await db.query("DELETE FROM tickets WHERE university_id = $1", [unid]).catch(() => {});
     await db.query("DELETE FROM ticket_types WHERE university_id = $1", [unid]).catch(() => {});

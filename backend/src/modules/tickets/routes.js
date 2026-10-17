@@ -208,10 +208,12 @@ payments.registerFinalizer("ticket", {
     const { rows } = await client.query("SELECT status FROM tickets WHERE id = $1", [ticketId]);
     return rows[0]?.status === "reserved";
   },
-  // The organizer who gets paid is the lead of the club running the event.
+  // For event tickets: student pays the CampusHub admin's designated receiving account.
+  // Payments must not go directly to the event organizer.
   getRecipient: async (ticketId) => {
     const { rows } = await db.query(
-      `SELECT c.lead_user_id, e.title, tt.name AS ticket_type
+      `SELECT e.id AS event_id, e.university_id, e.title, tt.name AS ticket_type, c.lead_user_id,
+              (SELECT id FROM users WHERE role = 'admin' AND university_id = e.university_id ORDER BY created_at LIMIT 1) AS admin_id
          FROM tickets t
          JOIN events e ON e.id = t.event_id
          JOIN clubs c ON c.id = e.club_id
@@ -220,7 +222,19 @@ payments.registerFinalizer("ticket", {
       [ticketId]
     );
     if (!rows[0]) return null;
-    return { userId: rows[0].lead_user_id, description: `Ticket: ${rows[0].title} (${rows[0].ticket_type})` };
+    const r = rows[0];
+    let adminUserId = r.admin_id;
+    if (!adminUserId) {
+      const { rows: superAdmin } = await db.query("SELECT id FROM users WHERE role = 'super_admin' ORDER BY created_at LIMIT 1");
+      adminUserId = superAdmin[0]?.id;
+    }
+    return {
+      userId: adminUserId,
+      organizerId: r.lead_user_id,
+      universityId: r.university_id,
+      isCampusHub: true,
+      description: `Event Ticket: ${r.title} (${r.ticket_type})`,
+    };
   },
   onConfirmed: async (ticketId, client) => {
     const signature = signTicket(ticketId);
@@ -246,6 +260,25 @@ payments.registerFinalizer("ticket", {
       "Your reserved ticket was released. Please try again.",
     ]);
     await notifyWaitlistIfAvailable(ticket.ticket_type_id, client);
+  },
+  onRefunded: async (ticketId, client, { reason, actorId } = {}) => {
+    const { rows } = await client.query("SELECT * FROM tickets WHERE id = $1 FOR UPDATE", [ticketId]);
+    const ticket = rows[0];
+    if (!ticket) return;
+    if (["active", "reserved"].includes(ticket.status)) {
+      await client.query("UPDATE tickets SET status='cancelled' WHERE id=$1", [ticketId]);
+      await client.query("UPDATE ticket_types SET quantity_sold = GREATEST(0, quantity_sold - 1) WHERE id = $1", [
+        ticket.ticket_type_id,
+      ]);
+      const ev = await client.query("SELECT title FROM events WHERE id = $1", [ticket.event_id]);
+      const eventTitle = ev.rows[0]?.title || "Event";
+      await client.query("INSERT INTO notifications (user_id, type, title, body) VALUES ($1,'ticket_update',$2,$3)", [
+        ticket.holder_id,
+        "Ticket refunded",
+        `Your ticket for "${eventTitle}" was refunded and cancelled.`,
+      ]);
+      await notifyWaitlistIfAvailable(ticket.ticket_type_id, client);
+    }
   },
 });
 

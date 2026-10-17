@@ -4,9 +4,10 @@ const CHAPA_BASE = "https://api.chapa.co/v1";
 
 // For local testing without real internet connection or real Chapa API keys
 let mockVerifier = null;
+let mockInitiator = null;
 
 function isConfigured() {
-  return !!process.env.CHAPA_SECRET_KEY || !!mockVerifier;
+  return !!process.env.CHAPA_SECRET_KEY || !!mockVerifier || !!mockInitiator;
 }
 
 function getSecretKey() {
@@ -41,6 +42,16 @@ function verifyWebhookSignature(rawBody, signature, secret) {
 }
 
 async function initiate(payment, { buyerEmail, callbackUrl, returnUrl }) {
+  const trimmedEmail = typeof buyerEmail === "string" ? buyerEmail.trim().toLowerCase() : "";
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  if (!trimmedEmail || !emailRegex.test(trimmedEmail)) {
+    throw new Error("Valid buyer email is required to initiate Chapa payment");
+  }
+
+  if (mockInitiator) {
+    return mockInitiator(payment, { buyerEmail: trimmedEmail, callbackUrl, returnUrl });
+  }
+
   if (!isConfigured()) {
     throw new Error("Chapa provider selected but CHAPA_SECRET_KEY is not set");
   }
@@ -53,7 +64,7 @@ async function initiate(payment, { buyerEmail, callbackUrl, returnUrl }) {
     body: JSON.stringify({
       amount: String(payment.amount),
       currency: payment.currency || "ETB",
-      email: buyerEmail || "student@example.com",
+      email: trimmedEmail,
       tx_ref: payment.id,
       callback_url: callbackUrl,
       return_url: returnUrl,
@@ -140,6 +151,14 @@ function _clearMockVerifier() {
   mockVerifier = null;
 }
 
+function _setMockInitiator(fn) {
+  mockInitiator = fn;
+}
+
+function _clearMockInitiator() {
+  mockInitiator = null;
+}
+
 module.exports = {
   name: "chapa",
   isConfigured,
@@ -149,4 +168,6 @@ module.exports = {
   getSecretKey,
   _setMockVerifier,
   _clearMockVerifier,
+  _setMockInitiator,
+  _clearMockInitiator,
 };

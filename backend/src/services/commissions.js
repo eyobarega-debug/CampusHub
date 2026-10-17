@@ -2,15 +2,15 @@
 // (merchant / event organizer / student renting out an item), so each seller
 // has their own account and the admin can see every seller separately.
 //
-// Rates (override with env): shop sale 10%, event ticket 10%, rental 5%.
-// Any other payment type (P2P sale, promotion) keeps using the university fee schedule rate.
+// Exact default commission rates per business rules:
+// Material sales: 5% (0.05), Event tickets: 2.5% (0.025), Rentals: 0% (0.00).
 const RATES = {
-  order: Number(process.env.COMMISSION_RATE_ORDER ?? 0.1),
-  ticket: Number(process.env.COMMISSION_RATE_TICKET ?? 0.1),
-  booking: Number(process.env.COMMISSION_RATE_BOOKING ?? 0.05),
+  order: Number(process.env.COMMISSION_RATE_ORDER ?? 0.05),
+  ticket: Number(process.env.COMMISSION_RATE_TICKET ?? 0.025),
+  booking: Number(process.env.COMMISSION_RATE_BOOKING ?? 0.00),
 };
 
-const round2 = (n) => Math.round(n * 100) / 100;
+const round2 = (n) => Math.round((Number(n) + Number.EPSILON) * 100) / 100;
 
 function rateFor(transactionType, fallbackRate) {
   return RATES[transactionType] ?? fallbackRate;
@@ -21,8 +21,9 @@ function rateFor(transactionType, fallbackRate) {
 async function record(client, { payment, finalizer, base, rate, commission }) {
   if (!finalizer.getRecipient || commission <= 0) return null;
   const recipient = await finalizer.getRecipient(payment.transaction_id);
-  if (!recipient || !recipient.userId) return null;
-  const { rows: u } = await client.query("SELECT role FROM users WHERE id = $1", [recipient.userId]);
+  const sellerId = recipient?.organizerId || recipient?.userId;
+  if (!sellerId) return null;
+  const { rows: u } = await client.query("SELECT role FROM users WHERE id = $1", [sellerId]);
   const { rows } = await client.query(
     `INSERT INTO commissions
        (university_id, payment_id, transaction_type, transaction_id, description,
@@ -32,7 +33,7 @@ async function record(client, { payment, finalizer, base, rate, commission }) {
      RETURNING *`,
     [
       payment.university_id, payment.id, payment.transaction_type, payment.transaction_id,
-      recipient.description || null, recipient.userId, u[0]?.role || null,
+      recipient.description || null, sellerId, u[0]?.role || null,
       payment.amount, base, rate, commission,
     ]
   );

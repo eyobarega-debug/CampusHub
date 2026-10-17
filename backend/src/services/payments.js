@@ -48,44 +48,18 @@ const finalizers = {};
 function registerFinalizer(transactionType, { onConfirmed, onFailed, getRecipient, isOpen, commissionBase, onRefunded }) {
   finalizers[transactionType] = { onConfirmed, onFailed, getRecipient, isOpen, commissionBase, onRefunded };
 }
+const RETURN_PATHS = {
+  order: "/orders",
+  booking: "/rentals/mine",
+  ticket: "/tickets",
+  p2p_order: "/listings",
+  promotion: "/merchant",
+};
+
 async function initiatePayment({ transactionType, transactionId, amount, buyerId, buyerEmail, method }) {
   if (!finalizers[transactionType]) throw badRequest(`Unknown transaction type: ${transactionType}`);
-  if (method === "manual") return initiateManualPayment({ transactionType, transactionId, amount, buyerId });
-  const provider = selectProvider();
-  // ...rest unchanged
-
-  const { rows } = await db.query(
-    `INSERT INTO payments (transaction_type, transaction_id, provider, amount, status, payer_id, currency)
-     VALUES ($1,$2,$3,$4,'pending',$5,'ETB') RETURNING *`,
-    [transactionType, transactionId, provider.name, amount, buyerId]
-  );
-  const payment = rows[0];
-  await audit(buyerId, "payment.initiate", transactionType, transactionId, { paymentId: payment.id, amount, provider: provider.name });
-
-  let checkout;
-  try {
-    checkout = await provider.initiate(payment, {
-      buyerEmail,
-      callbackUrl: `${process.env.PUBLIC_API_URL || "http://localhost:4000"}/api/payments/webhook`,
-      returnUrl: `${process.env.PUBLIC_APP_URL || "http://localhost:5173"}/orders`,
-    });
-  } catch (err) {
-    // Initiation itself failed (e.g. provider API unreachable) — mark the
-    // payment failed immediately rather than leaving a "pending" row with
-    // no way to ever complete it.
-    await db.query("UPDATE payments SET status='failed' WHERE id=$1", [payment.id]);
-    throw badRequest(`Could not start payment with provider "${provider.name}": ${err.message}`, "PROVIDER_INIT_FAILED");
-  }
-
-  return {
-    paymentId: payment.id,
-    amount: Number(payment.amount),
-    provider: provider.name,
-    // Phase 1 kept this field name for the mock provider's local checkout
-    // route; real providers return a hosted checkoutUrl instead.
-    mockCheckoutPath: checkout.checkoutPath,
-    checkoutUrl: checkout.checkoutUrl,
-  };
+  // In CampusHub Manual Payment System, all new transactions use the secure manual payment workflow
+  return initiateManualPayment({ transactionType, transactionId, amount, buyerId });
 }
 
 // Simulates (mock provider) or verifies (real provider) the payment
@@ -101,6 +75,15 @@ async function initiatePayment({ transactionType, transactionId, amount, buyerId
 // is confirmed until the payee approves. Stock / capacity / dates stay held by
 // the caller's reservation until then.
 async function initiateManualPayment({ transactionType, transactionId, amount, buyerId }) {
+  // 1. Prevent duplicate active payments for the same transaction
+  const { rows: existingActive } = await db.query(
+    "SELECT id, provider, status FROM payments WHERE transaction_type = $1 AND transaction_id = $2 AND status IN ('pending', 'under_review')",
+    [transactionType, transactionId]
+  );
+  if (existingActive.length > 0) {
+    throw conflict("A payment is already in progress for this transaction", "PAYMENT_IN_PROGRESS");
+  }
+
   const finalizer = finalizers[transactionType];
   let recipient;
   let accounts;
@@ -114,18 +97,36 @@ async function initiateManualPayment({ transactionType, transactionId, amount, b
     }
     if (recipient.userId === buyerId) throw badRequest("You can't pay yourself", "SELF_PAYMENT");
 
-    const { rows } = await db.query(
-      `SELECT id, method, account_name, account_number, instructions, is_default
-         FROM payout_accounts WHERE owner_id = $1 AND active
-        ORDER BY is_default DESC, created_at`,
-      [recipient.userId]
-    );
-    accounts = rows;
-    if (!accounts.length) {
-      throw badRequest(
-        "The seller hasn't added a payout account yet, so they can't accept direct payments. Please contact them.",
-        "NO_PAYOUT_ACCOUNT"
+    if (recipient.isCampusHub) {
+      // Require official CampusHub receiving accounts for this specific university
+      const { rows: hubAccounts } = await db.query(
+        `SELECT id, method, account_name, account_number, instructions, is_default
+           FROM payout_accounts
+          WHERE university_id = $1 AND is_campus_hub = true AND active = true
+          ORDER BY is_default DESC, created_at`,
+        [recipient.universityId]
       );
+      if (!hubAccounts.length) {
+        throw badRequest(
+          "The university has not configured an official receiving account for event tickets yet. Please contact campus administration.",
+          "NO_CAMPUSHUB_RECEIVING_ACCOUNT"
+        );
+      }
+      accounts = hubAccounts;
+    } else {
+      const { rows } = await db.query(
+        `SELECT id, method, account_name, account_number, instructions, is_default
+           FROM payout_accounts WHERE owner_id = $1 AND active
+          ORDER BY is_default DESC, created_at`,
+        [recipient.userId]
+      );
+      accounts = rows;
+      if (!accounts.length) {
+        throw badRequest(
+          "The seller hasn't added a payout account yet, so they can't accept direct payments. Please contact them.",
+          "NO_PAYOUT_ACCOUNT"
+        );
+      }
     }
   } catch (err) {
     // The caller already reserved stock / a seat / dates — give that hold back.
@@ -137,15 +138,24 @@ async function initiateManualPayment({ transactionType, transactionId, amount, b
     throw err;
   }
 
-  const { rows } = await db.query(
-    `INSERT INTO payments
-       (transaction_type, transaction_id, provider, amount, status,
-        payer_id, payee_id, payee_accounts, description, expires_at)
-     VALUES ($1,$2,'manual',$3,'pending',$4,$5,$6,$7, now() + ($8 || ' hours')::interval)
-     RETURNING *`,
-    [transactionType, transactionId, amount, buyerId, recipient.userId, JSON.stringify(accounts), recipient.description || null, String(MANUAL_WINDOW_HOURS)]
-  );
-  const payment = rows[0];
+  let payment;
+  try {
+    const { rows } = await db.query(
+      `INSERT INTO payments
+         (transaction_type, transaction_id, provider, amount, status,
+          payer_id, payee_id, payee_accounts, description, expires_at)
+       VALUES ($1,$2,'manual',$3,'pending',$4,$5,$6,$7, now() + ($8 || ' hours')::interval)
+       RETURNING *`,
+      [transactionType, transactionId, amount, buyerId, recipient.userId, JSON.stringify(accounts), recipient.description || null, String(MANUAL_WINDOW_HOURS)]
+    );
+    payment = rows[0];
+  } catch (err) {
+    if (err.code === "23505") {
+      throw conflict("A payment is already in progress for this transaction", "PAYMENT_IN_PROGRESS");
+    }
+    throw err;
+  }
+
   await audit(buyerId, "payment.initiate", transactionType, transactionId, {
     paymentId: payment.id, amount, provider: "manual", payeeId: recipient.userId,
   });
@@ -258,7 +268,7 @@ async function refundPayment(paymentId, amount, reason, actorId) {
     if (finalizer && finalizer.onRefunded && refundAmount >= Number(payment.amount)) {
       await finalizer.onRefunded(payment.transaction_id, client, { payment, refundAmount, reason, actorId });
     }
-    return payment;
+    return { ...payment, status: "refunded" };
   });
 }
 

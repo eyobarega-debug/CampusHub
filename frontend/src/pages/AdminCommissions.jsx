@@ -2,8 +2,9 @@ import { useCallback, useEffect, useState } from "react";
 import { client } from "../api/client";
 import { useAuth, errMsg } from "../context/AuthContext";
 import { Badge, Button, Card, EmptyState, ErrorBanner, PageHeader, Spinner, SuccessBanner } from "../components/ui";
-import { LedgerTable, SummaryCards, birr } from "./Commissions";
+import { LedgerTable, SummaryCards } from "./Commissions";
 
+const birr = (n) => `${Number(n).toFixed(2)} birr`;
 const ROLE_LABEL = { merchant: "Merchant", organizer: "Event organizer", student: "Student (rentals / P2P)" };
 
 // The admin's ledger for ONE seller: their own sales, what they owe, and the settle buttons.

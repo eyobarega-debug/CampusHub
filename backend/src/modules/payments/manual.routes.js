@@ -17,7 +17,7 @@ const { z } = require("zod");
 const db = require("../../db");
 const { requireAuth } = require("../../middleware/auth");
 const { validate } = require("../../middleware/validate");
-const { asyncHandler, badRequest, conflict, notFound } = require("../../utils/errors");
+const { asyncHandler, badRequest, conflict, notFound, forbidden } = require("../../utils/errors");
 const { notify, audit } = require("../../utils/notify");
 const paymentsService = require("../../services/payments");
 const { RATES } = require("../../services/commissions");
@@ -52,8 +52,34 @@ function canView(user, payment) {
   return user.role === "admin" && payment.university_id === user.university_id;
 }
 function canReview(user, payment) {
-  // The payee decides; an admin of the same university can override (e.g. payee unreachable).
-  return canView(user, payment) && payment.payer_id !== user.id;
+  if (!canView(user, payment)) return false;
+  if (payment.payer_id === user.id) return false;
+
+  // EVENT TICKETS: ONLY an authorized CampusHub admin can approve or reject!
+  // Students cannot approve, organizers cannot approve, merchants cannot approve.
+  if (payment.transaction_type === "ticket") {
+    if (user.role === "super_admin") return true;
+    return user.role === "admin" && payment.university_id === user.university_id;
+  }
+
+  // MATERIAL SALES (orders): Merchant confirms payment receipt; admins can also investigate/resolve
+  if (payment.transaction_type === "order") {
+    if (user.id === payment.payee_id) return true;
+    if (user.role === "super_admin") return true;
+    return user.role === "admin" && payment.university_id === user.university_id;
+  }
+
+  // RENTALS (bookings): Item owner confirms payment receipt; admins can investigate/resolve
+  if (payment.transaction_type === "booking") {
+    if (user.id === payment.payee_id) return true;
+    if (user.role === "super_admin") return true;
+    return user.role === "admin" && payment.university_id === user.university_id;
+  }
+
+  // Other (P2P): Seller confirms payment receipt
+  if (user.id === payment.payee_id) return true;
+  if (user.role === "super_admin") return true;
+  return user.role === "admin" && payment.university_id === user.university_id;
 }
 
 function publicPayment(p) {
@@ -229,13 +255,17 @@ router.post(
       const payment = await db.withTransaction(async (client) => {
         const { rows } = await client.query("SELECT * FROM payments WHERE id = $1 AND provider = 'manual' FOR UPDATE", [req.params.id]);
         const p = rows[0];
-        if (!p || p.payer_id !== req.user.id) throw notFound("Payment not found");
-        if (p.status === "under_review") throw conflict("Your proof is already waiting for the seller's approval", "ALREADY_UNDER_REVIEW");
-        if (p.status !== "pending") throw conflict(`This payment is already ${p.status}`, "PAYMENT_NOT_PENDING");
-        if (new Date(p.expires_at) < new Date()) {
+        if (!p) throw notFound("Payment not found");
+        const isPayer = p.payer_id === req.user.id;
+        const isPayee = p.payee_id === req.user.id;
+        const isAdminUser = ["admin", "super_admin"].includes(req.user.role) && (req.user.role === "super_admin" || p.university_id === req.user.university_id);
+        if (!isPayer && !isPayee && !isAdminUser) throw forbidden("Not authorized to submit proof for this payment");
+        if (p.status === "under_review" && isPayer) throw conflict("Your proof is already waiting for approval", "ALREADY_UNDER_REVIEW");
+        if (p.status !== "pending" && p.status !== "under_review") throw conflict(`This payment is already ${p.status}`, "PAYMENT_NOT_PENDING");
+        if (new Date(p.expires_at) < new Date() && isPayer) {
           throw conflict("The payment window has expired. Please place the order again.", "PAYMENT_EXPIRED");
         }
-        if (p.proof_attempts >= paymentsService.MANUAL_MAX_ATTEMPTS) {
+        if (p.proof_attempts >= paymentsService.MANUAL_MAX_ATTEMPTS && isPayer) {
           throw conflict("Too many rejected proofs for this payment.", "TOO_MANY_ATTEMPTS");
         }
 
@@ -254,12 +284,28 @@ router.post(
       await audit(req.user.id, "payment.proof_submitted", payment.transaction_type, payment.transaction_id, {
         paymentId: payment.id, referenceNumber,
       });
-      await notify(
-        payment.payee_id,
-        "payment_update",
-        "Payment proof to review",
-        `${req.user.name} says they paid ${Number(payment.amount).toFixed(2)} birr for ${payment.description || "an order"}. Check your account, then approve or reject.`
-      );
+
+      if (payment.transaction_type === "ticket") {
+        const { rows: admins } = await db.query(
+          "SELECT id FROM users WHERE role = 'admin' AND university_id = $1",
+          [payment.university_id]
+        );
+        for (const admin of admins) {
+          await notify(
+            admin.id,
+            "payment_update",
+            "Event ticket payment to review",
+            `${req.user.name} submitted payment proof for ${payment.description || "event ticket"}. Check receiving account and approve or reject.`
+          );
+        }
+      } else {
+        await notify(
+          payment.payee_id,
+          "payment_update",
+          "Payment proof to review",
+          `${req.user.name} says they paid ${Number(payment.amount).toFixed(2)} birr for ${payment.description || "an order"}. Check your account, then approve or reject.`
+        );
+      }
       res.status(201).json({ payment: publicPayment(payment) });
     } catch (err) {
       if (proofResult?.filename) removeFile(proofResult.filename);
@@ -304,7 +350,14 @@ router.post(
 
 async function loadForReview(req) {
   const payment = await loadManualPayment(req.params.id);
-  if (!payment || !canReview(req.user, payment)) throw notFound("Payment not found");
+  if (!payment) throw notFound("Payment not found");
+
+  if (payment.transaction_type === "ticket" && !["admin", "super_admin"].includes(req.user.role)) {
+    throw forbidden("Only an authorized CampusHub administrator can approve or reject event ticket payments");
+  }
+
+  if (!canReview(req.user, payment)) throw forbidden("You are not authorized to review this payment");
+
   if (payment.status !== "under_review") {
     throw conflict(`This payment is ${payment.status}, there is nothing to review`, "NOT_UNDER_REVIEW");
   }
