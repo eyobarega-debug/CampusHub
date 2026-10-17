@@ -42,10 +42,10 @@ function ReviewRow({ p, user, onDone, setError }) {
     return (
       <div className="mt-3 border-t border-slate/15 pt-3">
         <div className="rounded-lg bg-navy/5 p-3 text-xs text-navy space-y-1">
-          <p className="font-semibold">Event Ticket Payment — CampusHub Admin Approval Required</p>
+          <p className="font-semibold">Event Ticket Payment — ግቢያችን Admin Approval Required</p>
           <p>
-            Event ticket payments are received directly by CampusHub's designated admin account.
-            Only CampusHub administrators can verify and approve ticket payments. Once verified, the attendee receives their active ticket and QR code, and 97.5% net revenue is allocated to your organizer payout balance.
+            Event ticket payments are received directly by ግቢያችን's designated admin account.
+            Only authorized administrators can verify and approve ticket payments. Once verified, the attendee receives their active ticket and QR code, and 97.5% net revenue is allocated to your organizer payout balance.
           </p>
           <p className="font-mono text-slate">Reference: {p.proof?.referenceNumber || "None submitted"}</p>
         </div>
@@ -69,7 +69,7 @@ function ReviewRow({ p, user, onDone, setError }) {
         )}
         {!isTicket && p.commissionRate != null && p.commissionRate > 0 && (
           <span className="block text-xs mt-0.5">
-            Approving adds a {Math.round(p.commissionRate * 100)}% CampusHub commission to your account
+            Approving adds a {Math.round(p.commissionRate * 100)}% platform commission to your account
             {p.transactionType === "booking" ? " (on the rental fee, deposit excluded)" : ""}.
           </span>
         )}

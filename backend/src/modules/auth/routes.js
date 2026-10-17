@@ -91,11 +91,11 @@ function escapeHtml(s) {
 async function sendPasswordResetEmail({ email, name, resetToken }) {
   const appUrl = (process.env.APP_URL || process.env.FRONTEND_URL || "http://localhost:5173").replace(/\/+$/, "");
   const resetLink = `${appUrl}/reset-password?token=${encodeURIComponent(resetToken)}`;
-  const subject = "Reset your CampusHub password";
+  const subject = "Reset your Gibiyachin password";
   const text = [
     `Hi ${name || "there"},`,
     ``,
-    `You requested to reset your CampusHub password. Click the link below to set a new password:`,
+    `You requested to reset your Gibiyachin password. Click the link below to set a new password:`,
     `${resetLink}`,
     ``,
     `This link expires in 1 hour and can only be used once. If you did not request this, you can safely ignore this email.`,
@@ -104,7 +104,7 @@ async function sendPasswordResetEmail({ email, name, resetToken }) {
   const html = `
     <div style="font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;max-width:480px;margin:auto;padding:24px;border:1px solid #e2e8f0;border-radius:12px">
       <h2 style="margin:0 0 8px;color:#0f172a">Reset your password</h2>
-      <p style="color:#475569;margin:0 0 20px">Hi ${escapeHtml(name || "there")}, click the button below to reset your CampusHub password.</p>
+      <p style="color:#475569;margin:0 0 20px">Hi ${escapeHtml(name || "there")}, click the button below to reset your Gibiyachin password.</p>
       <div style="text-align:center;margin:24px 0">
         <a href="${resetLink}" style="background:#1e3a8a;color:#ffffff;padding:12px 24px;text-decoration:none;border-radius:8px;font-weight:600;display:inline-block">Reset Password</a>
       </div>

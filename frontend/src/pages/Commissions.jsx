@@ -61,7 +61,7 @@ function SubmitCommissionModal({ defaultAmount, accounts, onDone, onCancel }) {
       fd.append("screenshot", file);
 
       await client.post("/commissions/submit-payment", fd);
-      onDone("Payment proof submitted! CampusHub administration will verify and mark your commission as settled.");
+      onDone("Payment proof submitted! Administration will verify and mark your commission as settled.");
     } catch (err) {
       setError(errMsg(err, "Failed to submit commission payment"));
     } finally {
@@ -71,14 +71,14 @@ function SubmitCommissionModal({ defaultAmount, accounts, onDone, onCancel }) {
 
   return (
     <Card className="mb-6 p-5 border-navy/30 bg-paper">
-      <h3 className="font-semibold text-navy text-lg mb-2">Pay Commission to CampusHub</h3>
+      <h3 className="font-semibold text-navy text-lg mb-2">Pay Commission to ግቢያችን</h3>
       <p className="text-xs text-slate mb-4">
-        Transfer the commission amount to one of CampusHub's official receiving accounts below, then upload your transaction reference and screenshot.
+        Transfer the commission amount to one of the university's official receiving accounts below, then upload your transaction reference and screenshot.
       </p>
 
       {accounts && accounts.length > 0 && (
         <div className="mb-4 space-y-2">
-          <p className="text-xs font-semibold text-navy uppercase tracking-wider">CampusHub Receiving Accounts</p>
+          <p className="text-xs font-semibold text-navy uppercase tracking-wider">Official Receiving Accounts</p>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
             {accounts.map((acc) => (
               <div key={acc.id} className="rounded-lg bg-white border border-slate/20 p-2.5 text-xs">
@@ -243,8 +243,8 @@ export default function Commissions() {
         title="My commissions"
         subtitle={
           rates
-            ? `CampusHub keeps ${pct(rates.order)} of shop sales, ${pct(rates.ticket)} of event tickets and ${pct(rates.booking)} of rental fees (deposit excluded).`
-            : "The commission CampusHub keeps from each of your sales."
+            ? `Platform keeps ${pct(rates.order)} of shop sales, ${pct(rates.ticket)} of event tickets and ${pct(rates.booking)} of rental fees (deposit excluded).`
+            : "The commission ግቢያችን keeps from each of your sales."
         }
         action={
           data?.summary?.commissionDue > 0 && !showPayModal ? (
@@ -274,7 +274,7 @@ export default function Commissions() {
 
           <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
             <p className="text-sm text-slate">
-              You receive payments directly. The commission shown as <strong>due</strong> is what you pay to CampusHub.
+              You receive payments directly. The commission shown as <strong>due</strong> is what you pay to ግቢያችን.
             </p>
             {data.summary.commissionDue > 0 && !showPayModal && (
               <Button variant="accent" onClick={() => { setShowPayModal(true); setSuccess(""); setError(""); }}>

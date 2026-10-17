@@ -31,7 +31,7 @@ export default function MockCheckout() {
       <Card className="p-6 text-center">
         <ErrorBanner message={error} />
         <p className="mb-1 text-sm text-slate">You're paying for</p>
-        <p className="mb-1 text-lg font-semibold text-navy">{label || "CampusHub order"}</p>
+        <p className="mb-1 text-lg font-semibold text-navy">{label || "Gibiyachin order"}</p>
         {amount != null && <p className="mb-6 text-3xl font-bold text-accent">{Number(amount).toFixed(2)} birr</p>}
         <div className="flex flex-col gap-3">
           <Button variant="accent" disabled={loading} onClick={() => complete("success")}>
@@ -42,7 +42,7 @@ export default function MockCheckout() {
           </Button>
         </div>
         <p className="mt-6 text-xs text-slate">
-          In production this screen is the payment provider's own hosted checkout; CampusHub only ever
+          In production this screen is the payment provider's own hosted checkout; ግቢያችን only ever
           learns the result via a signed webhook (Section 16.2), never by trusting the browser directly.
         </p>
       </Card>

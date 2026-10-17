@@ -39,7 +39,7 @@ router.post(
       ? await db.query("SELECT id FROM users WHERE role = 'admin' AND university_id = $1", [req.user.university_id])
       : { rows: [] };
     await Promise.all(
-      admins.rows.map((a) => notify(a.id, "merchant_application", "New merchant application", `${req.body.businessName} applied to sell on CampusHub.`))
+      admins.rows.map((a) => notify(a.id, "merchant_application", "New merchant application", `${req.body.businessName} applied to sell on ግቢያችን.`))
     );
 
     res.status(201).json({ application: rows[0] });

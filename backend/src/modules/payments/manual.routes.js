@@ -55,7 +55,7 @@ function canReview(user, payment) {
   if (!canView(user, payment)) return false;
   if (payment.payer_id === user.id) return false;
 
-  // EVENT TICKETS: ONLY an authorized CampusHub admin can approve or reject!
+  // EVENT TICKETS: ONLY an authorized Gibiyachin admin can approve or reject!
   // Students cannot approve, organizers cannot approve, merchants cannot approve.
   if (payment.transaction_type === "ticket") {
     if (user.role === "super_admin") return true;
@@ -353,7 +353,7 @@ async function loadForReview(req) {
   if (!payment) throw notFound("Payment not found");
 
   if (payment.transaction_type === "ticket" && !["admin", "super_admin"].includes(req.user.role)) {
-    throw forbidden("Only an authorized CampusHub administrator can approve or reject event ticket payments");
+    throw forbidden("Only an authorized Gibiyachin administrator can approve or reject event ticket payments");
   }
 
   if (!canReview(req.user, payment)) throw forbidden("You are not authorized to review this payment");

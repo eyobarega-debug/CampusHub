@@ -174,7 +174,7 @@ export default function ProfileSettings({ user, onProfileUpdated }) {
       <Card className="p-6">
         <h3 className="text-lg font-bold text-navy">Security & Password</h3>
         <p className="mt-1 text-xs text-slate">
-          Update your password to keep your CampusHub account secure.
+          Update your password to keep your ግቢያችን account secure.
         </p>
         <form onSubmit={handlePasswordSubmit} className="mt-4 space-y-4">
           <ErrorBanner message={passError} />

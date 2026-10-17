@@ -1,4 +1,4 @@
-// CampusHub Manual Payment System
+// Gibiyachin Platform Manual Payment System
 // All new transactions use the secure manual payment and confirmation workflow.
 export const PAYMENT_METHOD = "manual";
 

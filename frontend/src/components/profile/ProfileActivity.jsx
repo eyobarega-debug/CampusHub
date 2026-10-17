@@ -30,7 +30,7 @@ export default function ProfileActivity({ activities = [] }) {
     return (
       <EmptyState
         title="No recent activity yet"
-        subtitle="Your orders, rental bookings, listings, tickets, and events will appear here as you use CampusHub."
+        subtitle="Your orders, rental bookings, listings, tickets, and events will appear here as you use ግቢያችን."
       />
     );
   }

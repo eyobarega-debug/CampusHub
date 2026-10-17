@@ -54,7 +54,7 @@ export default function PublicProfile() {
           subtitle={error || "The profile you are looking for does not exist or has been made private."}
           action={
             <Button as={Link} to="/" variant="primary" className="mt-4">
-              Return to CampusHub Home
+              Return to ግቢያችን Home
             </Button>
           }
         />

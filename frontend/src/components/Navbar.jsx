@@ -38,8 +38,8 @@ export default function Navbar() {
     <nav className="sticky top-0 z-40 bg-navy shadow-md">
       <div className="mx-auto flex max-w-6xl items-center justify-between gap-4 px-4 py-3">
         <Link to="/" className="flex items-center gap-2 text-lg font-bold text-white">
-          <span className="rounded-md bg-accent px-2 py-0.5 text-white">CH</span>
-          CampusHub
+          <span className="rounded-md bg-accent px-2 py-0.5 text-white">ግ</span>
+          ግቢያችን
         </Link>
 
         <div className="flex flex-1 flex-wrap items-center gap-1">

@@ -1,6 +1,9 @@
-# CampusHub Full-Stack Project
+# ግቢያችን (Gibiyachin Platform)
 
-CampusHub is a full-stack campus marketplace and event platform built with a Node.js/Express backend and a React frontend. This is the single merged project: the Phase 1 MVP, the Phase 2 features (Redis, SMS simulation, in-app P2P payment, tiered late fees, recurring events + waitlists, offline scan batches, CSV exports, payment-provider registry) and the Phase 3 multi-university tenancy all live in `backend/` and `frontend/`.
+> **University Marketplace & Campus Services Platform**<br>
+> *Formerly CampusHub. Rebranded to ግቢያችን (English transliteration: Gibiyachin).*
+
+Gibiyachin Platform (ግቢያችን) is a university marketplace and campus services platform built with a Node.js/Express backend and a React frontend. This is the single merged project: the Phase 1 MVP, the Phase 2 features (Redis, SMS simulation, in-app P2P payment, tiered late fees, recurring events + waitlists, offline scan batches, CSV exports, payment-provider registry) and the Phase 3 multi-university tenancy all live in `backend/` and `frontend/`.
 
 ## Project structure
 

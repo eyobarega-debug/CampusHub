@@ -32,7 +32,7 @@ export default function Notifications() {
         action={items.some((n) => !n.read_at) && <Button variant="outline" onClick={markAllRead}>Mark all read</Button>}
       />
       {items.length === 0 ? (
-        <EmptyState title="Nothing yet" subtitle="Activity across CampusHub will show up here." />
+        <EmptyState title="Nothing yet" subtitle="Activity across ግቢያችን will show up here." />
       ) : (
         <div className="space-y-2">
           {items.map((n) => (

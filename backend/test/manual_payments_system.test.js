@@ -616,7 +616,7 @@ describe("Complete Manual Payment System — Comprehensive Suite", () => {
       });
 
       assert.equal(res.status, 403);
-      assert.match(res.data.error.message, /only an authorized campushub administrator|only campushub admin/i);
+      assert.match(res.data.error.message, /only an authorized gibiyachin administrator|only gibiyachin admin/i);
     });
 
     test("2.6 Student attempting to approve ticket payment is strictly rejected (HTTP 403)", async () => {

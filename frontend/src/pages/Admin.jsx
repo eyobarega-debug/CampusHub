@@ -756,8 +756,8 @@ function EventPaymentsTab() {
       <div className="rounded-lg bg-navy/5 p-4 text-xs text-slate">
         <p className="font-semibold text-navy">Admin Event Ticket Approval Queue</p>
         <p>
-          Students pay CampusHub's receiving account for event tickets. Verify the transaction reference in your bank/Telebirr account before approving.
-          Approving issues the active ticket QR code, retains CampusHub's 2.5% platform commission, and attributes 97.5% net payable to the event organizer.
+          Students pay ግቢያችን's receiving account for event tickets. Verify the transaction reference in your bank/Telebirr account before approving.
+          Approving issues the active ticket QR code, retains the 2.5% platform commission, and attributes 97.5% net payable to the event organizer.
         </p>
       </div>
 
@@ -902,7 +902,7 @@ function OrganizerPayoutsTab() {
       <div className="rounded-lg bg-navy/5 p-4 text-xs text-slate">
         <p className="font-semibold text-navy">Organizer Payout Settlements (SRS Section 8)</p>
         <p>
-          CampusHub retains a 2.5% platform commission on event ticket sales. The remaining 97.5% net payable is held by CampusHub
+          ግቢያችን retains a 2.5% platform commission on event ticket sales. The remaining 97.5% net payable is held by ግቢያችን
           until paid out to the organizer's verified payout account. Record external bank/Telebirr transfers here.
         </p>
       </div>
@@ -978,7 +978,7 @@ function OrganizerPayoutsTab() {
                 <p className="text-xs text-slate">{o.organizer_email}</p>
                 <div className="mt-2 flex flex-wrap gap-4 text-xs">
                   <span>Gross Sales: <strong>{Number(o.total_sales).toFixed(2)} birr</strong></span>
-                  <span>CampusHub 2.5%: <strong className="text-accent-dark">{Number(o.platform_commission).toFixed(2)} birr</strong></span>
+                  <span>Platform 2.5%: <strong className="text-accent-dark">{Number(o.platform_commission).toFixed(2)} birr</strong></span>
                   <span>Net Payable: <strong>{Number(o.net_payable).toFixed(2)} birr</strong></span>
                   <span>Paid Out: <strong className="text-ok">{Number(o.paid_out).toFixed(2)} birr</strong></span>
                 </div>
@@ -1082,7 +1082,7 @@ function CommissionPaymentsTab() {
   }, []);
 
   async function verify(id) {
-    if (!window.confirm("Verify that this commission payment has been received in CampusHub's receiving account?")) return;
+    if (!window.confirm("Verify that this commission payment has been received in ግቢያችን's receiving account?")) return;
     setError("");
     setSuccess("");
     setBusyId(id);
@@ -1122,7 +1122,7 @@ function CommissionPaymentsTab() {
       <div className="rounded-lg bg-navy/5 p-4 text-xs text-slate">
         <p className="font-semibold text-navy">Merchant Commission Settle Verification (SRS Section 8)</p>
         <p>
-          Merchants pay 5% commission on material sales to CampusHub's receiving account and submit evidence here.
+          Merchants pay 5% commission on material sales to ግቢያችን's receiving account and submit evidence here.
           Verifying automatically settles the merchant's due commission records up to the verified amount.
         </p>
       </div>
@@ -1234,7 +1234,7 @@ function ReceivingAccountsTab() {
     setBusy(true);
     try {
       await client.post("/admin/receiving-accounts", form);
-      setSuccess("CampusHub receiving account added!");
+      setSuccess("Official receiving account added!");
       setForm({ method: "telebirr", accountName: "", accountNumber: "", instructions: "", isDefault: false });
       load();
     } catch (err) {
@@ -1245,7 +1245,7 @@ function ReceivingAccountsTab() {
   }
 
   async function handleDelete(id) {
-    if (!window.confirm("Deactivate this CampusHub receiving account?")) return;
+    if (!window.confirm("Deactivate this receiving account?")) return;
     setError("");
     setSuccess("");
     try {
@@ -1262,7 +1262,7 @@ function ReceivingAccountsTab() {
   return (
     <div className="space-y-6">
       <div className="rounded-lg bg-navy/5 p-4 text-xs text-slate">
-        <p className="font-semibold text-navy">CampusHub University Receiving Accounts</p>
+        <p className="font-semibold text-navy">ግቢያችን University Receiving Accounts</p>
         <p>
           Configure the official Telebirr, CBE Birr, or Bank accounts that students and merchants transfer to
           for event ticket payments and platform commissions. Students pay these accounts directly.
@@ -1286,7 +1286,7 @@ function ReceivingAccountsTab() {
             <option value="other">Other Bank / Wallet</option>
           </Select>
           <Input
-            label="Account Name (e.g. CampusHub Uni Branch)"
+            label="Account Name (e.g. Gibiyachin Uni Branch)"
             required
             value={form.accountName}
             onChange={(e) => setForm({ ...form, accountName: e.target.value })}

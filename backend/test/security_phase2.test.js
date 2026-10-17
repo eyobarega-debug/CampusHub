@@ -383,7 +383,7 @@ describe("Task 5: Password Reset Email Delivery", () => {
     assert.equal(res.data.devResetToken, undefined, "Raw token must NOT be in JSON response");
     assert.equal(capturedEmails.length, 1, "Exactly one reset email dispatched");
     assert.equal(capturedEmails[0].to, testStudent.email);
-    assert.match(capturedEmails[0].subject, /Reset your CampusHub password/i);
+    assert.match(capturedEmails[0].subject, /Reset your Gibiyachin password/i);
     assert.match(capturedEmails[0].text, /reset-password\?token=/);
   });
 

@@ -35,7 +35,7 @@ export default function Login() {
 
   return (
     <div className="mx-auto max-w-sm py-12">
-      <PageHeader title="Log in" subtitle="Welcome back to CampusHub." />
+      <PageHeader title="Log in" subtitle="Welcome back to ግቢያችን (Gibiyachin)." />
       <Card className="p-6">
         <form onSubmit={onSubmit} className="space-y-4">
           <ErrorBanner message={error} />
